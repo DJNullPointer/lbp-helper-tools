@@ -1,0 +1,10 @@
+{
+  "PropertyWare": {
+    "domain": "https://app.propertyware.com/",
+    "cookieName": "JSESSIONID"
+  },
+  "PropertyMeld": {
+    "domain": "https://app.propertymeld.com/*",
+    "cookieName": "sessionid"
+  }
+}

@@ -1,34 +1,52 @@
 import "./style.css";
 import lbpLogo from "/lbp-logo.svg";
-import { setupCounter } from "./counter";
-import { checkCookieExists } from "./cookieTracker";
-
-const pwLoginCookieName = "JSESSIONID";
+import { renderStatuses } from "./utils/index";
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
-  <div>
-    <a href="https://vitejs.dev" target="_blank">
-      <img src="${lbpLogo}" class="logo" alt="lbp-logo" />
-    </a>
-    <h1>LBP Helper Tools</h1>
-    <div class="card">
-      <button id="counter" type="button"></button>
-	<p id="pw-login-status"></p>
-    </div>
-    <p class="read-the-docs">Helper tool menu to go here</p>
+  <div class="popup">
+    <header class="popup-header">
+      <div class="brand">
+        <img src="${lbpLogo}" class="logo" alt="LBP logo" />
+        <div class="brand-text">
+          <h1>LBP Helper Tools</h1>
+          <p class="subtitle">Internal productivity shortcuts</p>
+        </div>
+      </div>
+
+      <div class="login-status-row">
+        <span class="status-context">PropertyWare</span>
+        <span
+          id="pware-login-status"
+          class="status-indicator status-indicator--checking"
+        >
+          Checking…
+        </span>
+      </div>
+
+
+
+      <div class="login-status-row">
+        <span class="status-context">PropertyWare</span>
+        <span
+          id="pmeld-login-status"
+          class="status-indicator status-indicator--checking"
+        >
+          Checking…
+        </span>
+      </div>
+    </header>
+
+    <section class="tools">
+      <div class="tools-section">
+        <h2 class="section-title">Tools</h2>
+        <div class="section-body">
+          <p class="placeholder">
+            Tools menu coming soon.
+          </p>
+        </div>
+      </div>
+    </section>
   </div>
 `;
 
-setupCounter(document.querySelector<HTMLButtonElement>("#counter")!);
-
-checkCookieExists(pwLoginCookieName).then((exists) => {
-  if (exists) {
-    console.log(`${pwLoginCookieName} exists.`);
-    document.querySelector<HTMLParagraphElement>("pw-login-status")!.innerHTML =
-      `cookie is present: ${pwLoginCookieName}`;
-  } else {
-    console.log(`${pwLoginCookieName} does not exist.`);
-    document.querySelector<HTMLParagraphElement>("pw-login-status")!.innerHTML =
-      `cookie is not present: ${pwLoginCookieName}`;
-  }
-});
+renderStatuses();
