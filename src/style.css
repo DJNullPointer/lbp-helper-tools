@@ -24,7 +24,7 @@ body {
 .popup-header {
   display: flex;
   flex-direction: column;
-  gap: 10px;                 /* <-- adds breathing room */
+  gap: 10px;
   padding-bottom: 10px;
   margin-bottom: 12px;
   border-bottom: 1px solid #e5e7eb;
@@ -108,3 +108,47 @@ body {
   line-height: 1.45;
 }
 
+/* ===== Snackbar ===== */
+.snackbar-container {
+  position: fixed;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  z-index: 100;
+}
+
+/* Snackbar base */
+.snackbar {
+  min-width: 220px;
+  max-width: 280px;
+  padding: 8px 12px;
+  margin-top: 6px;
+  border-radius: 8px;
+  background: #111827;
+  color: #f9fafb;
+  font-size: 0.8rem;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.16s ease-out, transform 0.16s ease-out;
+}
+
+.snackbar--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.snackbar--success {
+  border-left: 3px solid #16a34a;
+}
+
+.snackbar--error {
+  border-left: 3px solid #dc2626;
+}
+
+.snackbar-icon {
+  font-size: 1rem;
+}	

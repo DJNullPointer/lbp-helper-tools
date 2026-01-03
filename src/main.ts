@@ -21,12 +21,7 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         >
           Checking…
         </span>
-      </div>
-
-
-
-      <div class="login-status-row">
-        <span class="status-context">PropertyWare</span>
+        <span class="status-context">PropertyMeld</span>
         <span
           id="pmeld-login-status"
           class="status-indicator status-indicator--checking"
@@ -34,6 +29,9 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
           Checking…
         </span>
       </div>
+
+
+
     </header>
 
     <section class="tools">
