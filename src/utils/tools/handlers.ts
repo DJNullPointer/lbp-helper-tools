@@ -24,12 +24,11 @@ async function executeCopyRelevantInfo(): Promise<void> {
     throw new Error("Could not determine current tab URL");
   }
 
-  // Check if we're on a PropertyWare property detail page
-  const propertyDetailPattern = /https:\/\/app\.propertyware\.com\/pms\/property\/\d+/;
-  if (!matchesUrlPattern(tab.url, propertyDetailPattern)) {
+  // Check if we're on PropertyMeld
+  if (!matchesUrlPattern(tab.url, "propertymeld.com")) {
     throw new Error(
-      "This tool only works on PropertyWare property detail pages.\n" +
-      "Please navigate to a property detail page first."
+      "This tool only works on PropertyMeld.\n" +
+      "Please navigate to a PropertyMeld page first."
     );
   }
 
@@ -49,7 +48,7 @@ async function executeCopyRelevantInfo(): Promise<void> {
     const err = error as Error;
     if (err.message.includes("Content script not loaded")) {
       throw new Error(
-        "PropertyWare content script not loaded. Please refresh the page and try again."
+        "PropertyMeld content script not loaded. Please refresh the page and try again."
       );
     }
     throw error;

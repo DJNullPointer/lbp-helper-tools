@@ -7,6 +7,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
+  
+  if (message.type === "COPY_RELEVANT_INFO") {
+    handleCopyRelevantInfo()
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+  
   return false;
 });
 
@@ -62,5 +70,102 @@ async function handleDownloadMeldInvoices(): Promise<{
     count: invoiceUrls.length,
     urls: invoiceUrls,
   };
+}
+
+async function handleCopyRelevantInfo(): Promise<void> {
+  if (!window.location.hostname.includes("propertymeld.com")) {
+    throw new Error("This tool only works on PropertyMeld");
+  }
+
+  const propertyIdentifier = extractPropertyIdentifier();
+  
+  if (!propertyIdentifier) {
+    throw new Error("Could not find property identifier on this page. Please ensure you're on a property page.");
+  }
+
+  const propertyWareUrl = constructPropertyWareUrl(propertyIdentifier);
+  
+  const response = await chrome.runtime.sendMessage({
+    type: "FETCH_PROPERTYWARE_PAGE",
+    url: propertyWareUrl,
+  });
+
+  if (!response.success) {
+    throw new Error(response.error || "Failed to fetch PropertyWare page");
+  }
+
+  const html = response.html;
+  const relevantInfo = extractRelevantInfo(html);
+  
+  await navigator.clipboard.writeText(relevantInfo);
+}
+
+function extractPropertyIdentifier(): string | null {
+  const url = window.location.href;
+  
+  const propertyIdMatch = url.match(/property[\/\-_]([^\/\?#]+)/i);
+  if (propertyIdMatch) {
+    return propertyIdMatch[1];
+  }
+
+  const addressElement = document.querySelector('[data-property-address], .property-address, [class*="address"]');
+  if (addressElement) {
+    const address = addressElement.textContent?.trim();
+    if (address) {
+      return address;
+    }
+  }
+
+  const propertyIdElement = document.querySelector('[data-property-id], .property-id, [id*="property"]');
+  if (propertyIdElement) {
+    const id = propertyIdElement.textContent?.trim() || propertyIdElement.getAttribute('data-property-id');
+    if (id) {
+      return id;
+    }
+  }
+
+  return null;
+}
+
+function constructPropertyWareUrl(identifier: string): string {
+  if (/^\d+$/.test(identifier)) {
+    return `https://app.propertyware.com/pms/property/${identifier}`;
+  }
+  
+  const encodedIdentifier = encodeURIComponent(identifier);
+  return `https://app.propertyware.com/pms/property/search?q=${encodedIdentifier}`;
+}
+
+function extractRelevantInfo(html: string): string {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  const info: string[] = [];
+  
+  const propertyAddress = doc.querySelector('.property-address, [class*="address"], [data-property-address]');
+  if (propertyAddress) {
+    info.push(`Address: ${propertyAddress.textContent?.trim() || 'N/A'}`);
+  }
+  
+  const propertyId = doc.querySelector('.property-id, [class*="property-id"], [data-property-id]');
+  if (propertyId) {
+    info.push(`Property ID: ${propertyId.textContent?.trim() || 'N/A'}`);
+  }
+  
+  const tenantInfo = doc.querySelector('.tenant-info, [class*="tenant"]');
+  if (tenantInfo) {
+    info.push(`Tenant: ${tenantInfo.textContent?.trim() || 'N/A'}`);
+  }
+  
+  const rentAmount = doc.querySelector('.rent-amount, [class*="rent"], [data-rent]');
+  if (rentAmount) {
+    info.push(`Rent: ${rentAmount.textContent?.trim() || 'N/A'}`);
+  }
+  
+  if (info.length === 0) {
+    return "No relevant information found on PropertyWare page.";
+  }
+  
+  return info.join('\n');
 }
 

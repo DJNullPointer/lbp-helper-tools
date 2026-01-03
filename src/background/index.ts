@@ -22,6 +22,13 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
 
+    if (message.type === "FETCH_PROPERTYWARE_PAGE") {
+      fetchPropertyWarePage(message.url)
+        .then((html) => sendResponse({ success: true, html }))
+        .catch((error) => sendResponse({ success: false, error: error.message }));
+      return true;
+    }
+
     if (message.type === "COPY_TO_CLIPBOARD") {
       sendResponse({ success: true, message: "Clipboard operation should be in content script" });
       return false;
@@ -56,6 +63,28 @@ async function handleDownloads(
     }
   }
   console.log(`[Background] Finished processing ${urls.length} downloads`);
+}
+
+async function fetchPropertyWarePage(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch PropertyWare page: ${response.status} ${response.statusText}`);
+    }
+
+    const html = await response.text();
+    return html;
+  } catch (error) {
+    const err = error as Error;
+    throw new Error(`Error fetching PropertyWare page: ${err.message}`);
+  }
 }
 
 
