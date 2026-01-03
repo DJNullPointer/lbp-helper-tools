@@ -59,12 +59,19 @@ async function handleDownloadMeldInvoices(): Promise<{
     }
   });
 
-  // Send download request to background worker
-  await chrome.runtime.sendMessage({
+  // Send download request to background worker and wait for confirmation
+  const response = await chrome.runtime.sendMessage({
     type: "DOWNLOAD_FILES",
     urls: invoiceUrls,
     filenames: filenames.length > 0 ? filenames : undefined,
   });
+
+  if (!response || !response.success) {
+    throw new Error(response?.error || "Failed to queue downloads");
+  }
+
+  // Give downloads a moment to start
+  await new Promise(resolve => setTimeout(resolve, 500));
 
   return {
     count: invoiceUrls.length,

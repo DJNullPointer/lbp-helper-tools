@@ -81,22 +81,19 @@ function createCategorySection(
         if (onToolClick) {
           onToolClick(clickedTool);
         } else {
-          // Show loading sequence
-          const loadingPromise = showLoadingSequence({
-            container: menuContainer,
-            message: `Running ${clickedTool.name}...`,
-          });
+          // Create work promise that will be passed to loading sequence
+          const workPromise = executeTool(clickedTool);
 
-          // Execute the tool
+          // Show loading sequence with work promise - checkmark will show when work completes
           try {
-            await executeTool(clickedTool);
-            // Loading sequence will show success checkmark automatically
-            await loadingPromise;
-            showSnackbar(`${clickedTool.name} completed successfully!`, {
-              type: "success",
+            await showLoadingSequence({
+              container: menuContainer,
+              message: `Running ${clickedTool.name}...`,
+              workPromise: workPromise,
             });
+            // Checkmark animation is sufficient for success - no snackbar needed
           } catch (error) {
-            // If error occurs, we need to restore the menu
+            // If error occurs, restore the menu and show error snackbar
             createToolsMenu({ container: menuContainer });
             showSnackbar(
               error instanceof Error ? error.message : "Tool execution failed",

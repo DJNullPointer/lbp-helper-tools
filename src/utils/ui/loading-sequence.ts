@@ -1,16 +1,16 @@
 export interface LoadingSequenceOptions {
   container: HTMLElement;
   message?: string;
+  workPromise?: Promise<void>;
   onComplete?: () => void;
 }
 
 export function showLoadingSequence(
   options: LoadingSequenceOptions,
 ): Promise<void> {
-  const { container, message = "Processing...", onComplete } = options;
+  const { container, message = "Processing...", workPromise, onComplete } = options;
 
-  return new Promise((resolve) => {
-
+  return new Promise((resolve, reject) => {
     const loadingContainer = document.createElement("div");
     loadingContainer.className = "loading-sequence";
 
@@ -22,7 +22,6 @@ export function showLoadingSequence(
       <div class="spinner-ring"></div>
     `;
 
-
     const messageEl = document.createElement("div");
     messageEl.className = "loading-message";
     messageEl.textContent = message;
@@ -30,20 +29,14 @@ export function showLoadingSequence(
     loadingContainer.appendChild(spinner);
     loadingContainer.appendChild(messageEl);
 
-
     container.innerHTML = "";
     container.appendChild(loadingContainer);
-
 
     requestAnimationFrame(() => {
       loadingContainer.classList.add("loading-sequence--visible");
     });
 
-
-    const loadingDuration = 2000 + Math.random() * 1000;
-
-    setTimeout(() => {
-
+    const showSuccess = () => {
       loadingContainer.innerHTML = "";
 
       const successContainer = document.createElement("div");
@@ -95,7 +88,29 @@ export function showLoadingSequence(
         }
         resolve();
       }, 1500);
-    }, loadingDuration);
+    };
+
+    if (workPromise) {
+      workPromise
+        .then(() => {
+          showSuccess();
+        })
+        .catch((error) => {
+          reject(error);
+        });
+    } else {
+      const minLoadingTime = 1000;
+      const startTime = Date.now();
+      
+      setTimeout(() => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < minLoadingTime) {
+          setTimeout(showSuccess, minLoadingTime - elapsed);
+        } else {
+          showSuccess();
+        }
+      }, minLoadingTime);
+    }
   });
 }
 
