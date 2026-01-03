@@ -32,14 +32,14 @@ export async function renderStatuses() {
 
     const updateEl = (el: HTMLSpanElement, loggedIn: boolean) => {
       if (loggedIn) {
-        el.textContent = "Signed in 😎";
+        el.textContent = "Logged in 😎";
         el.classList.remove(
           "status-indicator--checking",
           "status-indicator--error",
         );
         el.classList.add("status-indicator--ok");
       } else {
-        el.textContent = "Not signed in 😟";
+        el.textContent = "Not logged in 😟";
         el.classList.remove(
           "status-indicator--checking",
           "status-indicator--ok",

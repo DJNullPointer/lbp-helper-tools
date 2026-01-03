@@ -1,6 +1,6 @@
 import "./style.css";
 import lbpLogo from "/lbp-logo.svg";
-import { renderStatuses } from "./utils/index";
+import { renderStatuses, createToolsMenu } from "./utils/index";
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <div class="popup">
@@ -35,16 +35,14 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     </header>
 
     <section class="tools">
-      <div class="tools-section">
-        <h2 class="section-title">Tools</h2>
-        <div class="section-body">
-          <p class="placeholder">
-            Tools menu coming soon.
-          </p>
-        </div>
-      </div>
+      <div id="tools-container" class="tools-container"></div>
     </section>
   </div>
 `;
 
 renderStatuses();
+
+const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
+if (toolsContainer) {
+  createToolsMenu({ container: toolsContainer });
+}

@@ -1,14 +1,37 @@
 {
   "manifest_version": 3,
   "name": "LBP Helper Tools",
-  "description": "A set of internal tools for a better quality of life workflow at LBP",
+  "description": "A set of internal helper tools for LBP workflow",
   "version": "1.0.0",
 
   "action": {
     "default_popup": "index.html"
   },
 
-  "permissions": ["cookies"],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://app.propertyware.com/*"],
+      "js": ["src/content/propertyware.ts"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://app.propertymeld.com/*"],
+      "js": ["src/content/meld.ts"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "permissions": [
+    "cookies",
+    "downloads",
+    "tabs",
+    "scripting"
+  ],
 
   "host_permissions": [
     "https://app.propertyware.com/*",

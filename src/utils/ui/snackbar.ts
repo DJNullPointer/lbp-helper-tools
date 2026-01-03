@@ -4,7 +4,6 @@ export function showSnackbar(
 ) {
   const { type = "success", durationMs = 2500 } = options || {};
 
-  // Ensure container exists
   let container = document.querySelector<HTMLDivElement>(".snackbar-container");
   if (!container) {
     container = document.createElement("div");
@@ -30,7 +29,6 @@ export function showSnackbar(
     el.classList.add("snackbar--visible");
   });
 
-  // Auto-remove
   setTimeout(() => {
     el.classList.remove("snackbar--visible");
     setTimeout(() => {
@@ -38,6 +36,6 @@ export function showSnackbar(
       if (container && container.childElementCount === 0) {
         container.remove();
       }
-    }, 200); // match transition duration
+    }, 200);
   }, durationMs);
 }
