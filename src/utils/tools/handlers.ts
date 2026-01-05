@@ -24,11 +24,11 @@ async function executeCopyRelevantInfo(): Promise<void> {
     throw new Error("Could not determine current tab URL");
   }
 
-  // Check if we're on PropertyMeld
+  // Basic domain check - detailed page validation happens in content scripts
   if (!matchesUrlPattern(tab.url, "propertymeld.com")) {
     throw new Error(
-      "This tool only works on PropertyMeld.\n" +
-      "Please navigate to a PropertyMeld page first."
+      "This tool only works on Meld Unit View or Meld Creation pages.\n" +
+      "Please navigate to those pages first."
     );
   }
 
@@ -48,7 +48,7 @@ async function executeCopyRelevantInfo(): Promise<void> {
     const err = error as Error;
     if (err.message.includes("Content script not loaded")) {
       throw new Error(
-        "PropertyMeld content script not loaded. Please refresh the page and try again."
+        "Content script not loaded. Please refresh the page and try again."
       );
     }
     throw error;
@@ -62,7 +62,7 @@ async function executeMeldDownloadInvoices(): Promise<void> {
     throw new Error("Could not determine current tab URL");
   }
 
-  // Check if we're on PropertyMeld
+  // Basic domain check - detailed page validation happens in content script
   if (!matchesUrlPattern(tab.url, "propertymeld.com")) {
     throw new Error(
       "This tool only works on PropertyMeld.\n" +

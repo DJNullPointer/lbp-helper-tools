@@ -22,13 +22,18 @@ async function handleDownloadMeldInvoices(): Promise<{
   count: number;
   urls: string[];
 }> {
-  // Check if we're on PropertyMeld
+  // TODO: Update this pattern to match the specific invoice page URL structure
+  // For now, checking if we're on PropertyMeld domain
   if (!window.location.hostname.includes("propertymeld.com")) {
     throw new Error("This tool only works on PropertyMeld");
   }
+  
+  // Add specific page pattern check here once the invoice page URL structure is known
+  // Example: const url = window.location.href;
+  // const invoicePagePattern = /https:\/\/app\.propertymeld\.com\/invoices/;
+  // if (!invoicePagePattern.test(url)) { throw new Error("..."); }
 
   // TODO: Implement actual scraping logic based on PropertyMeld's invoice page structure
-  // This is a placeholder - you'll need to inspect the actual DOM structure
   
   // Example: Find all invoice download links
   const invoiceLinks = document.querySelectorAll<HTMLAnchorElement>(
@@ -80,8 +85,18 @@ async function handleDownloadMeldInvoices(): Promise<{
 }
 
 async function handleCopyRelevantInfo(): Promise<void> {
-  if (!window.location.hostname.includes("propertymeld.com")) {
-    throw new Error("This tool only works on PropertyMeld");
+  const url = window.location.href;
+  
+  // Unit View pages: /property/{id} or /unit/{id}
+  // Meld Creation pages: /meld/create or /meld/new or similar
+  const unitViewPattern = /https:\/\/app\.propertymeld\.com\/(property|unit)\/[\w\-]+/;
+  const meldCreationPattern = /https:\/\/app\.propertymeld\.com\/meld\/(create|new)/;
+  
+  if (!unitViewPattern.test(url) && !meldCreationPattern.test(url)) {
+    throw new Error(
+      "This tool only works on PropertyMeld Unit View or PropertyMeld Meld Creation pages.\n" +
+      "Please navigate to those pages first."
+    );
   }
 
   const propertyIdentifier = extractPropertyIdentifier();
