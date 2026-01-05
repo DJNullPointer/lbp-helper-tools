@@ -1,4 +1,8 @@
-import { hasHostPermissions, checkCookieExists } from "../cookies/cookies";
+import {
+  hasHostPermissions,
+  isLoggedInToPW,
+  isLoggedInToPM,
+} from "../cookies/cookies";
 
 export async function renderStatuses() {
   const pwareEl = document.querySelector<HTMLSpanElement>(
@@ -26,8 +30,8 @@ export async function renderStatuses() {
     }
 
     const [pwareLoggedIn, pmeldLoggedIn] = await Promise.all([
-      checkCookieExists("PropertyWare"),
-      checkCookieExists("PropertyMeld"),
+      isLoggedInToPW(),
+      isLoggedInToPM(),
     ]);
 
     const updateEl = (el: HTMLSpanElement, loggedIn: boolean) => {

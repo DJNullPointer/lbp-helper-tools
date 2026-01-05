@@ -15,23 +15,13 @@
 
   "content_scripts": [
     {
-      "matches": ["https://app.propertyware.com/*"],
-      "js": ["src/content/propertyware.ts"],
-      "run_at": "document_idle"
-    },
-    {
       "matches": ["https://app.propertymeld.com/*"],
       "js": ["src/content/meld.ts"],
       "run_at": "document_idle"
     }
   ],
 
-  "permissions": [
-    "cookies",
-    "downloads",
-    "tabs",
-    "scripting"
-  ],
+  "permissions": ["cookies", "downloads", "tabs", "scripting", "clipboardRead", "clipboardWrite"],
 
   "host_permissions": [
     "https://app.propertyware.com/*",
