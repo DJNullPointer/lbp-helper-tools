@@ -13,14 +13,17 @@ const TOOLS: ToolItem[] = [
     id: "copy-relevant-info",
     name: "Copy Relevant Info",
     description:
-      "description",
+      "copies relevant information from this property's PW page to the clipboard. \n\n" +
+      "Currently only works on meld create page. \n\n" +
+      "Currently does not work for a unit's first created meld.",
     category: "property-mgmt",
   },
   {
     id: "meld-download-all-invoices",
-    name: "Meld: Download All Invoices",
+    name: "Download All Invoices",
     description:
-      "description",
+      "Downloads all invoices from a SINGLE page from Meld's FINANCES > INVOICES view \n\n" +
+      "Again, does not support multiple invoices pages. There are no current plans to change this.",
     category: "accounting",
   },
 ];

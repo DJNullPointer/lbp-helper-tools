@@ -402,27 +402,6 @@ function findFirstMeldSummaryUrlFromDom(
   return null;
 }
 
-// function extractMeldSummaryUrlsFromUnitHtml(
-//   html: string,
-//   baseUrl: string,
-// ): string[] {
-//   const parser = new DOMParser();
-//   const doc = parser.parseFromString(html, "text/html");
-//
-//   const anchors = Array.from(
-//     doc.querySelectorAll<HTMLAnchorElement>('a[href*="/meld/"]'),
-//   );
-//
-//   const urls = anchors
-//     .map((a) => new URL(a.getAttribute("href")!, baseUrl).toString())
-//     .filter((href) => /\/meld\/\d+\/summary\/?$/i.test(href));
-//
-//   console.log(urls);
-//
-//   // You may want to dedupe and maybe sort newest → oldest via DOM or querySelector
-//   return Array.from(new Set(urls));
-// }
-
 async function tryExtractIssueIdFromMeld(
   meldUrl: string,
 ): Promise<string | null> {
@@ -464,6 +443,8 @@ function buildUnitSummaryUrlFromNewMeld(url: URL): string {
 
   return `https://app.propertymeld.com/${prefix}/properties/${unitId}/summary/`;
 }
+
+// downloads meld invoices
 
 async function handleDownloadMeldInvoices(): Promise<{
   count: number;
