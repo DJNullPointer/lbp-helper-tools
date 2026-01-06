@@ -14,68 +14,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async
   }
 
-  // OPEN_ATTACHMENT_URLS -------------------------------------------------------
-  if (message.type === "OPEN_ATTACHMENT_URLS") {
-    const urls = message.urls as string[];
-    if (!urls || urls.length === 0) {
-      sendResponse({ success: false, error: "No attachment URLs provided" });
-      return false;
-    }
-
-    handleDownloads(urls)
-      .then(() => sendResponse({ success: true }))
-      .catch((error: Error) =>
-        sendResponse({ success: false, error: error.message }),
-      );
-    return true; // async
-  }
-
-  // RESOLVE_ISSUE_ID_FROM_UNIT_SUMMARY (for new-meld) -------------------------
-  if (message.type === "RESOLVE_ISSUE_ID_FROM_UNIT_SUMMARY") {
-    (async () => {
-      try {
-        const issueId = await resolveIssueIdFromUnitSummary(
-          message.unitSummaryUrl as string,
-        );
-        if (!issueId) {
-          sendResponse({
-            success: false,
-            error: "No Propertyware Issue ID found on unit summary page.",
-          });
-          return;
-        }
-        sendResponse({ success: true, issueId });
-      } catch (err: any) {
-        console.error("RESOLVE_ISSUE_ID_FROM_UNIT_SUMMARY error", err);
-        sendResponse({ success: false, error: err?.message || String(err) });
-      }
-    })();
-    return true; // async
-  }
-
-  // RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY (for edit-meld) -----------------------
-  if (message.type === "RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY") {
-    (async () => {
-      try {
-        const issueId = await resolveIssueIdFromMeldSummary(
-          message.meldSummaryUrl as string,
-        );
-        if (!issueId) {
-          sendResponse({
-            success: false,
-            error: "No Propertyware Issue ID found on meld summary page.",
-          });
-          return;
-        }
-        sendResponse({ success: true, issueId });
-      } catch (err: any) {
-        console.error("RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY error", err);
-        sendResponse({ success: false, error: err?.message || String(err) });
-      }
-    })();
-    return true; // async
-  }
-
   // Simple HTML fetch passthrough ---------------------------------------------
   if (message.type === "FETCH_PROPERTYWARE_PAGE") {
     fetchPropertyWarePage(message.url as string)
@@ -86,16 +24,62 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async
   }
 
-  // PW SUMMARY BUILDER ---------------------------------------------------------
-  if (message.type === "FETCH_PROPERTYWARE_SUMMARY") {
+  // PW SUMMARY BUILDER FROM ADDRESS (NEW API-BASED FLOW) ----------------------
+  if (message.type === "FETCH_PROPERTYWARE_SUMMARY_FROM_ADDRESS") {
     (async () => {
       try {
-        const summary = await fetchPropertywareSummary(
-          message.issueId as string,
+        const summary = await fetchPropertywareSummaryFromAddress(
+          message.address as string,
         );
         sendResponse({ success: true, summary });
       } catch (err: any) {
-        console.error("FETCH_PROPERTYWARE_SUMMARY error", err);
+        console.error("FETCH_PROPERTYWARE_SUMMARY_FROM_ADDRESS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
+  // EXTRACT ADDRESS FROM UNIT SUMMARY URL -------------------------------------
+  if (message.type === "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL") {
+    (async () => {
+      try {
+        const address = await extractAddressFromUnitSummaryUrl(
+          message.unitSummaryUrl as string,
+        );
+        if (!address) {
+          sendResponse({
+            success: false,
+            error: "Could not extract address from unit summary page.",
+          });
+          return;
+        }
+        sendResponse({ success: true, address });
+      } catch (err: any) {
+        console.error("EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
+  // GET UNIT SUMMARY URL FROM MELD (for edit meld flow) -----------------------
+  if (message.type === "GET_UNIT_SUMMARY_URL_FROM_MELD") {
+    (async () => {
+      try {
+        const unitSummaryUrl = await getUnitSummaryUrlFromMeld(
+          message.meldSummaryUrl as string,
+        );
+        if (!unitSummaryUrl) {
+          sendResponse({
+            success: false,
+            error: "Could not find unit summary URL from meld summary page.",
+          });
+          return;
+        }
+        sendResponse({ success: true, unitSummaryUrl });
+      } catch (err: any) {
+        console.error("GET_UNIT_SUMMARY_URL_FROM_MELD error", err);
         sendResponse({ success: false, error: err?.message || String(err) });
       }
     })();
@@ -115,18 +99,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS") {
     (async () => {
       try {
-        const onProgress = (current: number, total: number, detail?: string) => {
+        const onProgress = (
+          current: number,
+          total: number,
+          detail?: string,
+        ) => {
           // Send progress update to any listening popup
-          chrome.runtime.sendMessage({
-            type: "INVOICE_DOWNLOAD_PROGRESS",
-            current,
-            total,
-            detail,
-          }).catch(() => {
-            // Ignore errors if no listener (popup might be closed)
-          });
+          chrome.runtime
+            .sendMessage({
+              type: "INVOICE_DOWNLOAD_PROGRESS",
+              current,
+              total,
+              detail,
+            })
+            .catch(() => {
+              // Ignore errors if no listener (popup might be closed)
+            });
         };
-        
+
         const result = await downloadInvoicesFromPaymentPages(
           message.paymentSummaryUrls as string[],
           onProgress,
@@ -188,9 +178,7 @@ async function downloadInvoicesFromPaymentPages(
   onProgress?: (current: number, total: number, detail?: string) => void,
 ): Promise<{ count: number; urls: string[] }> {
   const total = paymentSummaryUrls.length;
-  console.log(
-    `[InvoiceDownload] Starting download of ${total} invoices`,
-  );
+  console.log(`[InvoiceDownload] Starting download of ${total} invoices`);
 
   const downloadedUrls: string[] = [];
   const CONCURRENT_LIMIT = 5; // Process 5 tabs at a time to avoid overwhelming RAM
@@ -200,8 +188,10 @@ async function downloadInvoicesFromPaymentPages(
   for (let i = 0; i < paymentSummaryUrls.length; i += CONCURRENT_LIMIT) {
     const batch = paymentSummaryUrls.slice(i, i + CONCURRENT_LIMIT);
     const batchNumber = Math.floor(i / CONCURRENT_LIMIT) + 1;
-    const totalBatches = Math.ceil(paymentSummaryUrls.length / CONCURRENT_LIMIT);
-    
+    const totalBatches = Math.ceil(
+      paymentSummaryUrls.length / CONCURRENT_LIMIT,
+    );
+
     console.log(
       `[InvoiceDownload] Processing batch ${batchNumber}/${totalBatches} (${batch.length} invoices)`,
     );
@@ -209,23 +199,31 @@ async function downloadInvoicesFromPaymentPages(
     // Process batch concurrently
     const batchPromises = batch.map(async (url, batchIndex) => {
       const globalIndex = i + batchIndex;
-      
+
       // Update progress when starting each download
       if (onProgress) {
-        onProgress(globalIndex + 1, total, `Downloading invoice ${globalIndex + 1} of ${total}`);
+        onProgress(
+          globalIndex + 1,
+          total,
+          `Downloading invoice ${globalIndex + 1} of ${total}`,
+        );
       }
-      
+
       const result = await downloadInvoiceFromPaymentPage(url);
-      
+
       if (result) {
         downloadedUrls.push(result);
         completedCount++;
         // Update progress after each successful download
         if (onProgress) {
-          onProgress(completedCount, total, `Downloading invoice ${completedCount + 1} of ${total}`);
+          onProgress(
+            completedCount,
+            total,
+            `Downloading invoice ${completedCount + 1} of ${total}`,
+          );
         }
       }
-      
+
       return result;
     });
 
@@ -250,7 +248,11 @@ async function downloadInvoicesFromPaymentPages(
   );
 
   if (onProgress) {
-    onProgress(total, total, `Complete! Downloaded ${downloadedUrls.length} invoices`);
+    onProgress(
+      total,
+      total,
+      `Complete! Downloaded ${downloadedUrls.length} invoices`,
+    );
   }
 
   return {
@@ -282,7 +284,7 @@ async function downloadInvoiceFromPaymentPage(
   try {
     // 2. Wait for tab to load
     await waitForTabComplete(tabId);
-    
+
     // 3. Give SPA time to render
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -351,10 +353,10 @@ async function downloadInvoiceFromPaymentPage(
 }
 
 //
-// -------------------- MELD → ISSUE ID (new-meld support) ---------------------
+// -------------------- ADDRESS EXTRACTION FROM UNIT SUMMARY -------------------
 //
 
-async function resolveIssueIdFromUnitSummary(
+async function extractAddressFromUnitSummaryUrl(
   unitSummaryUrl: string,
 ): Promise<string | null> {
   // 1. Open a background tab with the unit summary URL
@@ -378,28 +380,31 @@ async function resolveIssueIdFromUnitSummary(
     // 2. Wait for that tab to finish loading
     await waitForTabComplete(tabId);
 
-    // 3. Ask the content script in THAT tab to find the meld summary URL
+    // 3. Give SPA time to render
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // 4. Ask the content script in THAT tab to extract the address
     // Retry with exponential backoff until content script responds or timeout
     let result: {
       success?: boolean;
-      meldUrl?: string;
+      address?: string;
       error?: string;
     } | null = null;
-    
+
     const maxAttempts = 10;
-    const maxWaitTime = 5000; // 5 seconds total
+    const maxWaitTime = 8000; // 8 seconds total (SPA might take longer)
     const startTime = Date.now();
-    
+
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         result = (await chrome.tabs.sendMessage(tabId, {
-          type: "SCRAPE_MELD_ISSUE_ID",
+          type: "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY",
         })) as {
           success?: boolean;
-          meldUrl?: string;
+          address?: string;
           error?: string;
         };
-        if (result && result.success) {
+        if (result && result.success && result.address) {
           break;
         }
       } catch (err: any) {
@@ -408,37 +413,98 @@ async function resolveIssueIdFromUnitSummary(
           console.warn("Timeout waiting for content script response");
           break;
         }
-        
+
         // Exponential backoff: 100ms, 200ms, 400ms, etc. (capped at 500ms)
         const delay = Math.min(100 * Math.pow(2, attempt), 500);
         await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
 
-    if (!result || !result.success || !result.meldUrl) {
-      console.warn(
-        "SCRAPE_MELD_ISSUE_ID failed or returned no meldUrl",
-        result,
-      );
+    if (!result || !result.success || !result.address) {
+      console.warn("Failed to extract address from unit summary tab", result);
       return null;
     }
 
-    // 4. Open another background tab to the meld URL and extract Issue ID from live DOM
-    const issueId = await extractIssueIdFromMeldTab(result.meldUrl);
-    return issueId || null;
+    return result.address;
   } finally {
     // 5. Clean up the background tab
     chrome.tabs.remove(tabId);
   }
 }
 
-async function resolveIssueIdFromMeldSummary(
+async function getUnitSummaryUrlFromMeld(
   meldSummaryUrl: string,
 ): Promise<string | null> {
-  // Directly extract Issue ID from the meld summary page
-  // (no need to find meld URL first, we already have it)
-  const issueId = await extractIssueIdFromMeldTab(meldSummaryUrl);
-  return issueId || null;
+  // 1. Open a background tab with the meld summary URL
+  const tab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
+    chrome.tabs.create({ url: meldSummaryUrl, active: false }, (t) => {
+      if (chrome.runtime.lastError || !t || t.id === undefined) {
+        reject(
+          new Error(
+            chrome.runtime.lastError?.message ||
+              "Failed to create tab for meld summary",
+          ),
+        );
+      } else {
+        resolve(t);
+      }
+    });
+  });
+
+  const tabId = tab.id!;
+  try {
+    // 2. Wait for that tab to finish loading
+    await waitForTabComplete(tabId);
+
+    // 3. Give SPA time to render
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // 4. Ask the content script to find the unit summary link
+    // Look for a link that matches the pattern /properties/\d+/summary/
+    let result: {
+      success?: boolean;
+      unitSummaryUrl?: string;
+      error?: string;
+    } | null = null;
+
+    const maxAttempts = 10;
+    const maxWaitTime = 8000;
+    const startTime = Date.now();
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        result = (await chrome.tabs.sendMessage(tabId, {
+          type: "FIND_UNIT_SUMMARY_URL",
+        })) as {
+          success?: boolean;
+          unitSummaryUrl?: string;
+          error?: string;
+        };
+        if (result && result.success && result.unitSummaryUrl) {
+          break;
+        }
+      } catch (err: any) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > maxWaitTime) {
+          console.warn("Timeout waiting for content script response");
+          break;
+        }
+
+        const delay = Math.min(100 * Math.pow(2, attempt), 500);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    if (!result || !result.success || !result.unitSummaryUrl) {
+      console.warn("Failed to find unit summary URL from meld tab", result);
+      return null;
+    }
+
+    return result.unitSummaryUrl;
+  } finally {
+    // 5. Clean up the background tab
+    chrome.tabs.remove(tabId);
+  }
 }
 
 function waitForTabComplete(tabId: number): Promise<void> {
@@ -454,80 +520,6 @@ function waitForTabComplete(tabId: number): Promise<void> {
     }
     chrome.tabs.onUpdated.addListener(listener);
   });
-}
-
-// Open meld page in background tab and extract Issue ID from live DOM (handles SPA)
-async function extractIssueIdFromMeldTab(
-  meldUrl: string,
-): Promise<string | null> {
-  // 1. Open a background tab with the meld URL
-  const tab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
-    chrome.tabs.create({ url: meldUrl, active: false }, (t) => {
-      if (chrome.runtime.lastError || !t || t.id === undefined) {
-        reject(
-          new Error(
-            chrome.runtime.lastError?.message ||
-              "Failed to create tab for meld page",
-          ),
-        );
-      } else {
-        resolve(t);
-      }
-    });
-  });
-
-  const tabId = tab.id!;
-  try {
-    // 2. Wait for that tab to finish loading
-    await waitForTabComplete(tabId);
-
-    // 3. Ask the content script in THAT tab to extract the Issue ID
-    // Retry with exponential backoff until content script responds or timeout
-    let result: {
-      success?: boolean;
-      issueId?: string;
-      error?: string;
-    } | null = null;
-    
-    const maxAttempts = 10;
-    const maxWaitTime = 8000; // 8 seconds total (SPA might take longer)
-    const startTime = Date.now();
-    
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        result = (await chrome.tabs.sendMessage(tabId, {
-          type: "EXTRACT_ISSUE_ID_FROM_MELD",
-        })) as {
-          success?: boolean;
-          issueId?: string;
-          error?: string;
-        };
-        if (result && result.success && result.issueId) {
-          break;
-        }
-      } catch (err: any) {
-        const elapsed = Date.now() - startTime;
-        if (elapsed > maxWaitTime) {
-          console.warn("Timeout waiting for content script response");
-          break;
-        }
-        
-        // Exponential backoff: 100ms, 200ms, 400ms, etc. (capped at 500ms)
-        const delay = Math.min(100 * Math.pow(2, attempt), 500);
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-
-    if (!result || !result.success || !result.issueId) {
-      console.warn("Failed to extract Issue ID from meld tab", result);
-      return null;
-    }
-
-    return result.issueId;
-  } finally {
-    // 4. Clean up the background tab
-    chrome.tabs.remove(tabId);
-  }
 }
 
 //
@@ -571,7 +563,9 @@ async function fetchPwHtml(url: string): Promise<string> {
   const cacheBuster = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
   urlWithCacheBust.searchParams.set("_nocache", cacheBuster);
 
-  console.log(`[Propertyware] Fetching ${url} with cache buster: ${cacheBuster}`);
+  console.log(
+    `[Propertyware] Fetching ${url} with cache buster: ${cacheBuster}`,
+  );
 
   const resp = await fetch(urlWithCacheBust.toString(), {
     credentials: "include",
@@ -585,7 +579,7 @@ async function fetchPwHtml(url: string): Promise<string> {
   if (!resp.ok) {
     throw new Error(`PW fetch failed: ${resp.status} ${url}`);
   }
-  
+
   const html = await resp.text();
   console.log(`[Propertyware] Fetched ${html.length} bytes from ${url}`);
   return html;
@@ -595,252 +589,74 @@ async function fetchPwHtml(url: string): Promise<string> {
 // --------------------- SUMMARY BUILDER PIPELINE ------------------------------
 //
 
-// Track last search to prevent rapid duplicate searches
-let lastSearch: { issueId: string; timestamp: number } | null = null;
+async function fetchPropertywareSummaryFromAddress(
+  address: string,
+): Promise<string> {
+  console.log(
+    `[Propertyware] Fetching unit detail from address: "${address}"`,
+  );
 
-async function fetchPropertywareSummary(issueId: string): Promise<string> {
-  const currentTimestamp = Date.now();
-  console.log(`[Propertyware] Fetching fresh data for Issue ID: ${issueId} (timestamp: ${currentTimestamp})`);
-  
-  // If this is the same Issue ID as last search and it was very recent, add a small delay
-  // to ensure Propertyware processes it as a new search
-  if (lastSearch && lastSearch.issueId === issueId && currentTimestamp - lastSearch.timestamp < 1000) {
-    const delay = 500;
-    console.log(`[Propertyware] Same Issue ID searched recently, adding ${delay}ms delay to ensure fresh search`);
-    await new Promise((resolve) => setTimeout(resolve, delay));
+  // 1) Call Propertyware API to get building ID
+  console.log(
+    `[Propertyware] Step 1: Calling API to find building by address...`,
+  );
+  const buildingId = await getBuildingIdFromAddress(address);
+  if (!buildingId) {
+    throw new Error(`Could not find building for address: ${address}`);
   }
-  
-  lastSearch = { issueId, timestamp: currentTimestamp };
-  
-  // 1) Search for the work order by Issue ID
-  console.log(`[Propertyware] Step 1: Searching for work order with Issue ID "${issueId}"...`);
-  const searchHtml = await postPwSearch(issueId);
-  const workOrderUrl = extractWorkOrderUrlFromSearch(searchHtml, issueId);
-  if (!workOrderUrl) {
-    throw new Error(`Could not find work order for Issue ID ${issueId}`);
-  }
-  console.log(`[Propertyware] Found work order URL: ${workOrderUrl}`);
+  console.log(`[Propertyware] Found building ID: ${buildingId}`);
 
-  // 2) Fetch work order detail page
-  console.log(`[Propertyware] Step 2: Fetching work order page (fresh, no cache)...`);
-  const woHtml = await fetchPwHtml(workOrderUrl);
+  // 2) Build unit detail URL directly using building ID
+  const unitUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${buildingId}`;
+  console.log(`[Propertyware] Unit detail URL: ${unitUrl}`);
 
-  // 2.5) Verify the work order page contains the Issue ID
-  if (!woHtml.includes(issueId)) {
-    throw new Error(
-      `Work order page does not contain Issue ID ${issueId}. This suggests we got the wrong work order.`,
-    );
-  }
-  console.log(`[Propertyware] Verified work order page contains Issue ID ${issueId}`);
-
-  // 3) From work order, get the unit detail URL
-  const unitUrl = extractUnitDetailUrlFromWorkOrder(woHtml);
-  if (!unitUrl) {
-    throw new Error("Could not find unit detail link on work order page.");
-  }
-  console.log(`[Propertyware] Found unit detail URL: ${unitUrl}`);
-
-  // 4) Fetch unit detail page
-  console.log(`[Propertyware] Step 3: Fetching unit detail page (fresh, no cache)...`);
+  // 3) Fetch unit detail page
+  console.log(
+    `[Propertyware] Step 2: Fetching unit detail page (fresh, no cache)...`,
+  );
   const unitHtml = await fetchPwHtml(unitUrl);
 
-  // 5) Build the final text summary from unit detail page only
-  console.log(`[Propertyware] Step 4: Building summary from fresh data...`);
+  // 4) Build the final text summary from unit detail page
+  console.log(`[Propertyware] Step 3: Building summary from fresh data...`);
   return buildSummaryFromPwPages(unitHtml);
 }
 
-async function postPwSearch(issueId: string): Promise<string> {
-  // Add unique request ID to URL to ensure fresh search
-  const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
-  const url = `https://app.propertyware.com/pw/search/search.do?_req=${uniqueId}`;
+async function getBuildingIdFromAddress(address: string): Promise<number | null> {
+  // Call Propertyware REST API
+  const apiUrl = new URL("https://api.propertyware.com/pw/api/rest/v1/buildings");
+  apiUrl.searchParams.set("address", address);
 
-  // Add aggressive cache-busting: timestamp + random number
-  const cacheBuster = `${Date.now()}-${Math.random().toString(36).substring(7)}`;
-  const body = new URLSearchParams({
-    action: "Search",
-    searchText: issueId,
-    includeInactives: "true",
-    _nocache: cacheBuster, // Cache buster
-    _timestamp: Date.now().toString(), // Additional timestamp
-  });
+  console.log(`[Propertyware] API URL: ${apiUrl.toString()}`);
 
-  console.log(`[Propertyware] POST search for Issue ID "${issueId}" with cache buster: ${cacheBuster}`);
-  console.log(`[Propertyware] Search URL: ${url}`);
-  console.log(`[Propertyware] Search body params: searchText=${issueId}, includeInactives=true`);
-
-  const resp = await fetch(url, {
-    method: "POST",
+  const resp = await fetch(apiUrl.toString(), {
+    method: "GET",
     credentials: "include",
-    cache: "reload", // More aggressive than no-store
     headers: {
-      "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
-      Pragma: "no-cache",
-      Expires: "0",
-      "X-Requested-With": "XMLHttpRequest", // Some servers check this
+      Accept: "application/json",
     },
-    body,
   });
 
   if (!resp.ok) {
-    throw new Error(`Search request failed: ${resp.status}`);
-  }
-
-  const html = await resp.text();
-  console.log(`[Propertyware] Search returned ${html.length} bytes`);
-  
-  // Verify the search results contain the Issue ID we searched for
-  if (!html.includes(issueId)) {
-    console.warn(`[Propertyware] WARNING: Search results do not contain Issue ID ${issueId}!`);
-    console.warn(`[Propertyware] This might indicate cached or incorrect search results.`);
-  } else {
-    console.log(`[Propertyware] Verified: Search results contain Issue ID ${issueId}`);
-  }
-  
-  return html;
-}
-
-function extractWorkOrderUrlFromSearch(
-  html: string,
-  issueId: string,
-): string | null {
-  const { document: doc } = parseHTML(html);
-
-  // Find ALL work order links in the search results
-  const allWorkOrderLinks = Array.from(
-    doc.querySelectorAll<HTMLAnchorElement>(
-    "a[href*='maintenance/work_order_detail.do']",
-    ),
-  );
-
-  console.log(
-    `[Propertyware] Found ${allWorkOrderLinks.length} work order link(s) in search results`,
-  );
-
-  if (allWorkOrderLinks.length === 0) return null;
-
-  // Try to find the work order link that's in the same row/context as the Issue ID
-  for (const a of allWorkOrderLinks) {
-    // Get the table row containing this link
-    const row = a.closest("tr");
-    if (!row) continue;
-
-    // Check if this row contains the Issue ID
-    const rowText = row.textContent || "";
-    if (rowText.includes(issueId)) {
-  const href = a.getAttribute("href");
-      if (href) {
-        const fullUrl = new URL(
-          href,
-          "https://app.propertyware.com/pw/search/search.do",
-        ).toString();
-        console.log(
-          `[Propertyware] Found matching work order URL (Issue ID ${issueId} in same row): ${fullUrl}`,
-        );
-        return fullUrl;
-      }
-    }
-  }
-
-  // If no exact match found, log a warning and use the first one
-  console.warn(
-    `[Propertyware] WARNING: Could not find work order with Issue ID ${issueId} in search results. Using first work order link.`,
-  );
-  const firstLink = allWorkOrderLinks[0];
-  const href = firstLink.getAttribute("href");
-  if (!href) return null;
-
-  const fullUrl = new URL(
-    href,
-    "https://app.propertyware.com/pw/search/search.do",
-  ).toString();
-  console.warn(`[Propertyware] Using first work order URL: ${fullUrl}`);
-  return fullUrl;
-}
-
-function extractUnitDetailUrlFromWorkOrder(html: string): string | null {
-  const { document: doc } = parseHTML(html);
-
-  // Find the Location section in the first table row
-  // Look for the <th> that contains "Location"
-  const locationHeader = Array.from(
-    doc.querySelectorAll<HTMLTableCellElement>("th"),
-  ).find((th) => /Location/i.test(th.textContent || ""));
-
-  if (!locationHeader) {
-    console.warn(
-      `[Propertyware] Could not find Location header in work order page`,
+    throw new Error(
+      `Propertyware API request failed: ${resp.status} ${resp.statusText}`,
     );
-    // Fallback to finding any unit detail link
-    const fallbackLink = doc.querySelector<HTMLAnchorElement>(
-    "a[href*='properties/unit_detail.do']",
-  );
-    if (fallbackLink) {
-      const href = fallbackLink.getAttribute("href");
-      if (href) {
-        return new URL(
-          href,
-          "https://app.propertyware.com/pw/maintenance/work_order_detail.do",
-        ).toString();
-      }
-    }
+  }
+
+  const data = (await resp.json()) as Array<{ id: number }>;
+  console.log(`[Propertyware] API returned ${data.length} building(s)`);
+
+  if (data.length === 0) {
+    console.warn(`[Propertyware] No buildings found for address: ${address}`);
     return null;
   }
 
-  // Get the parent <tr> of the Location header
-  const locationRow = locationHeader.closest("tr");
-  if (!locationRow) {
-    console.warn(`[Propertyware] Could not find Location row`);
-    return null;
-  }
-
-  // Find the <td> in the same row (the cell next to the Location header)
-  const locationCell = locationRow.querySelector<HTMLTableCellElement>("td");
-  if (!locationCell) {
-    console.warn(`[Propertyware] Could not find Location cell`);
-    return null;
-  }
-
-  // Find ALL links in the Location cell
-  const locationLinks = Array.from(
-    locationCell.querySelectorAll<HTMLAnchorElement>("a[href]"),
-  );
-
-  console.log(
-    `[Propertyware] Found ${locationLinks.length} link(s) in Location section`,
-  );
-
-  if (locationLinks.length === 0) {
-    console.warn(`[Propertyware] No links found in Location section`);
-    return null;
-  }
-
-  // Get the LAST link in the Location section (this is always the unit detail link)
-  const lastLink = locationLinks[locationLinks.length - 1];
-  const href = lastLink.getAttribute("href");
-  if (!href) {
-    console.warn(`[Propertyware] Last link in Location section has no href`);
-    return null;
-  }
-
-  // Build the full URL
-  const fullUrl = new URL(
-    href,
-    "https://app.propertyware.com/pw/maintenance/work_order_detail.do",
-  ).toString();
-  
-  console.log(
-    `[Propertyware] Found unit detail URL (last link in Location section): ${fullUrl}`,
-  );
-  console.log(
-    `[Propertyware] Link text: "${lastLink.textContent?.trim()}"`,
-  );
-  
-  return fullUrl;
+  // Return the first building's ID
+  const buildingId = data[0].id;
+  console.log(`[Propertyware] Using building ID: ${buildingId}`);
+  return buildingId;
 }
 
-function buildSummaryFromPwPages(
-  unitHtml: string,
-): string {
+function buildSummaryFromPwPages(unitHtml: string): string {
   const { document: unitDoc } = parseHTML(unitHtml);
 
   const lines: string[] = [];

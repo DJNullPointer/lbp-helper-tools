@@ -43,56 +43,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === "SCRAPE_MELD_ISSUE_ID") {
-    // Use async to wait for page to be ready
-    (async () => {
-      try {
-        // Wait for DOM to be ready
-        if (document.readyState !== "complete") {
-          await new Promise((resolve) => {
-            if (document.readyState === "complete") {
-              resolve(undefined);
-            } else {
-              window.addEventListener("load", () => resolve(undefined), {
-                once: true,
-              });
-            }
-          });
-        }
-
-        // Wait for SPA to render - look for common Meld page elements
-        await waitForSPAReady(
-          [
-            'a[href*="/meld/"]',
-            '[data-testid]',
-            'a[href]',
-          ],
-          5000,
-        );
-
-        const meldUrl = findFirstMeldSummaryUrlFromDom(
-          document,
-          window.location.href,
-        );
-        if (!meldUrl) {
-          sendResponse({
-            success: false,
-            error: "No meld summary URLs found on this page.",
-          });
-        } else {
-          sendResponse({ success: true, meldUrl });
-        }
-      } catch (err: any) {
-        console.error("SCRAPE_MELD_ISSUE_ID error", err);
-        sendResponse({
-          success: false,
-          error: err?.message || String(err),
-        });
-      }
-    })();
-    return true; // async response
-  }
-
   if (message.type === "COPY_TEXT_TO_CLIPBOARD") {
     // Copy text to clipboard from content script context using execCommand
     (async () => {
@@ -201,8 +151,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async response
   }
 
-  if (message.type === "EXTRACT_ISSUE_ID_FROM_MELD") {
-    // Extract Issue ID directly from the meld page DOM (handles SPA)
+  if (message.type === "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY") {
+    // Extract address from unit summary page DOM (handles SPA)
     (async () => {
       try {
         // Wait for DOM to be ready
@@ -218,28 +168,76 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           });
         }
 
-        // Wait for SPA to render - look for Issue ID element or Propertyware elements
+        // Wait for SPA to render - look for Address element
         await waitForSPAReady(
           [
-            '[data-testid^="meld-integration-resource-issue-id"]',
-            '[data-testid*="issue-id"]',
-            '[data-testid="integration-resource-partner-name"]',
+            'dt:has-text("Address")',
+            '[data-testid*="address"]',
+            '.euiText',
             'body',
           ],
           5000,
         );
 
-        const issueId = extractIssueIdFromMeldPage(document);
-        if (issueId) {
-          sendResponse({ success: true, issueId });
+        const address = extractAddressFromUnitSummaryPage(document);
+        if (address) {
+          sendResponse({ success: true, address });
         } else {
           sendResponse({
             success: false,
-            error: "Could not find Issue ID on meld page",
+            error: "Could not find Address on unit summary page",
           });
         }
       } catch (err: any) {
-        console.error("EXTRACT_ISSUE_ID_FROM_MELD error", err);
+        console.error("EXTRACT_ADDRESS_FROM_UNIT_SUMMARY error", err);
+        sendResponse({
+          success: false,
+          error: err?.message || String(err),
+        });
+      }
+    })();
+    return true; // async response
+  }
+
+  if (message.type === "FIND_UNIT_SUMMARY_URL") {
+    // Find unit summary URL from meld summary page DOM (handles SPA)
+    (async () => {
+      try {
+        // Wait for DOM to be ready
+        if (document.readyState !== "complete") {
+          await new Promise((resolve) => {
+            if (document.readyState === "complete") {
+              resolve(undefined);
+            } else {
+              window.addEventListener("load", () => resolve(undefined), {
+                once: true,
+              });
+            }
+          });
+        }
+
+        // Wait for SPA to render - look for property/unit links
+        await waitForSPAReady(
+          [
+            'a[href*="/properties/"]',
+            'a[href*="summary"]',
+            'a[href]',
+            'body',
+          ],
+          5000,
+        );
+
+        const unitSummaryUrl = findUnitSummaryUrlFromMeldPage(document, window.location.href);
+        if (unitSummaryUrl) {
+          sendResponse({ success: true, unitSummaryUrl });
+        } else {
+          sendResponse({
+            success: false,
+            error: "Could not find unit summary URL on meld summary page",
+          });
+        }
+      } catch (err: any) {
+        console.error("FIND_UNIT_SUMMARY_URL error", err);
         sendResponse({
           success: false,
           error: err?.message || String(err),
@@ -272,66 +270,89 @@ async function handleCopyRelevantInfo(): Promise<string> {
     );
   }
 
-  let issueId: string | null = null;
+  let unitSummaryUrl: string;
+  let address: string | null = null;
 
   if (isUnitSummary) {
-    // We're already on the page that has the meld links
-    issueId = await getIssueIdFromCurrentUnitSummaryPage();
-  } else if (isNewMeld) {
-    // We're on new-meld → derive unit summary URL and let the background
-    // spin up a hidden tab to scrape it
-    const unitSummaryUrl = buildUnitSummaryUrlFromNewMeld(url);
-    console.log("unit summary url is:", unitSummaryUrl);
-
-    const resp = (await chrome.runtime.sendMessage({
-      type: "RESOLVE_ISSUE_ID_FROM_UNIT_SUMMARY",
-      unitSummaryUrl,
-    })) as {
-      success: boolean;
-      issueId?: string;
-      error?: string;
-    };
-
-    if (!resp || !resp.success) {
-      throw new Error(
-        resp?.error ||
-          "Could not resolve Propertyware Issue ID from unit summary page.",
+    // We're already on the unit summary page
+    unitSummaryUrl = currentUrl;
+    // Extract address from current page
+    address = extractAddressFromUnitSummaryPage(document);
+    if (!address) {
+      // Wait for SPA to render if address not found immediately
+      await waitForSPAReady(
+        [
+          'dt:has-text("Address")',
+          '[data-testid*="address"]',
+          '.euiText',
+          'body',
+        ],
+        5000,
       );
+      address = extractAddressFromUnitSummaryPage(document);
     }
-    issueId = resp.issueId ?? null;
+  } else if (isNewMeld) {
+    // We're on new-meld → derive unit summary URL
+    unitSummaryUrl = buildUnitSummaryUrlFromNewMeld(url);
+    console.log("unit summary url is:", unitSummaryUrl);
   } else if (isEditMeld) {
-    // We're on edit-meld → derive meld summary URL and let the background
-    // spin up a hidden tab to extract Issue ID from the meld summary page
+    // We're on edit-meld → need to get unit summary URL from meld
+    // First, get the meld summary URL to find the unit
     const meldSummaryUrl = buildMeldSummaryUrlFromEditMeld(url);
     console.log("meld summary url is:", meldSummaryUrl);
-
+    
+    // Extract unit summary URL from meld summary page
     const resp = (await chrome.runtime.sendMessage({
-      type: "RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY",
+      type: "GET_UNIT_SUMMARY_URL_FROM_MELD",
       meldSummaryUrl,
     })) as {
       success: boolean;
-      issueId?: string;
+      unitSummaryUrl?: string;
       error?: string;
     };
 
-    if (!resp || !resp.success) {
+    if (!resp || !resp.success || !resp.unitSummaryUrl) {
       throw new Error(
         resp?.error ||
-          "Could not resolve Propertyware Issue ID from meld summary page.",
+          "Could not resolve unit summary URL from meld summary page.",
       );
     }
-    issueId = resp.issueId ?? null;
+    unitSummaryUrl = resp.unitSummaryUrl;
+  } else {
+    throw new Error("Invalid page type");
   }
 
-  if (!issueId) {
+  // If we don't have the address yet (new meld or edit meld), get it from unit summary
+  if (!address) {
+    // Need to open unit summary in background tab and extract address
+    const resp = (await chrome.runtime.sendMessage({
+      type: "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL",
+      unitSummaryUrl,
+    })) as {
+      success: boolean;
+      address?: string;
+      error?: string;
+    };
+
+    if (!resp || !resp.success || !resp.address) {
+      throw new Error(
+        resp?.error ||
+          "Could not extract address from unit summary page.",
+      );
+    }
+    address = resp.address;
+  }
+
+  if (!address) {
     throw new Error(
-      "Could not find a Propertyware Issue ID from this unit's meld(s).",
+      "Could not find address on unit summary page.",
     );
   }
 
+  // Use address to fetch Propertyware summary via API
   const response = (await chrome.runtime.sendMessage({
-    type: "FETCH_PROPERTYWARE_SUMMARY",
-    issueId,
+    type: "FETCH_PROPERTYWARE_SUMMARY_FROM_ADDRESS",
+    address,
   })) as {
     success: boolean;
     summary?: string;
@@ -346,171 +367,8 @@ async function handleCopyRelevantInfo(): Promise<string> {
   return response.summary;
 }
 
-async function getIssueIdFromCurrentUnitSummaryPage(): Promise<string | null> {
-  // Always use current document and URL (fresh, not cached)
-  const currentUrl = window.location.href;
-  console.log(`[ContentScript] Getting Issue ID from current unit summary page: ${currentUrl}`);
-  
-  const meldUrl = findFirstMeldSummaryUrlFromDom(
-    document,
-    currentUrl,
-  );
-
-  console.log("First meld summary URL found on current page:", meldUrl);
-
-  if (!meldUrl) return null;
-
-  const issueId = await tryExtractIssueIdFromMeld(meldUrl);
-  if (issueId) {
-    console.log("Using Issue ID:", issueId);
-    return issueId;
-  }
-
-  return null;
-}
 
 
-function extractIssueIdFromMeldPage(doc: Document): string | null {
-  // Try multiple selectors to find the Issue ID element
-  const selectors = [
-    '[data-testid^="meld-integration-resource-issue-id"]',
-    '[data-testid*="issue-id"]',
-    '[data-testid*="issueId"]',
-    '[data-testid*="issue_id"]',
-  ];
-
-  for (const selector of selectors) {
-    const issueIdEls = Array.from(doc.querySelectorAll<HTMLElement>(selector));
-    console.log(`Selector "${selector}" found ${issueIdEls.length} elements`);
-    
-    for (const issueIdEl of issueIdEls) {
-      // Get text content, which may be nested in child elements
-      let issueId = issueIdEl.textContent?.trim() || "";
-      console.log(`Element text content: "${issueId}"`);
-      
-      // If the text includes "Issue ID" label, extract just the number
-      issueId = issueId.replace(/Issue\s*ID/gi, "").trim();
-      
-      // Extract the first sequence of digits (should be the Issue ID)
-      const match = issueId.match(/\d+/);
-      if (match) {
-        const id = match[0];
-        console.log(`Found Issue ID using selector "${selector}": ${id}`);
-        return id;
-      }
-      
-      // If no match in textContent, try looking in all child elements
-      const children = Array.from(issueIdEl.querySelectorAll("*"));
-      for (const child of children) {
-        const childText = child.textContent?.trim() || "";
-        const childMatch = childText.match(/^\d+$/);
-        if (childMatch) {
-          console.log(`Found Issue ID in child element: ${childMatch[0]}`);
-          return childMatch[0];
-        }
-      }
-      
-      // Also check direct child nodes (text nodes)
-      for (const node of Array.from(issueIdEl.childNodes)) {
-        if (node.nodeType === 3) { // Text node
-          const text = node.textContent?.trim() || "";
-          const textMatch = text.match(/^\d+$/);
-          if (textMatch) {
-            console.log(`Found Issue ID in text node: ${textMatch[0]}`);
-            return textMatch[0];
-          }
-        }
-      }
-    }
-  }
-
-  // Fallback: Search the entire document for "Issue ID" followed by a number
-  const bodyText = doc.body?.textContent || "";
-  console.log("Searching body text for Issue ID pattern...");
-  const fallbackMatch = bodyText.match(/Issue\s*ID[:\s]*(\d+)/i);
-  if (fallbackMatch) {
-    const id = fallbackMatch[1];
-    console.log(`Found Issue ID via text search: ${id}`);
-    return id;
-  }
-
-  // Last resort: look for any number near "Issue ID" text
-  const nearMatch = bodyText.match(/(?:Issue\s*ID|IssueID)[^\d]*(\d{4,})/i);
-  if (nearMatch) {
-    const id = nearMatch[1];
-    console.log(`Found Issue ID near "Issue ID" text: ${id}`);
-    return id;
-  }
-
-  console.warn("Could not find Issue ID on meld page");
-  return null;
-}
-
-function findFirstMeldSummaryUrlFromDom(
-  doc: Document,
-  baseUrl: string,
-): string | null {
-  // Try multiple selectors to find meld links
-  const selectors = [
-    'a[href*="/meld/"]',
-    'a[href*="meld"]',
-    'a[href]',
-  ];
-
-  for (const selector of selectors) {
-    const anchors = Array.from(
-      doc.querySelectorAll<HTMLAnchorElement>(selector),
-    );
-    console.log(`Trying selector "${selector}": found ${anchors.length} anchors`);
-
-    for (const a of anchors) {
-      const href = a.getAttribute("href");
-      if (!href) continue;
-
-      try {
-        const full = new URL(href, baseUrl).toString();
-
-        // /meld/<number>/summary/ with optional ? or #
-        if (/\/meld\/\d+\/summary\/?(?:$|[?#])/i.test(full)) {
-          console.log("Matched meld summary href:", full);
-          return full;
-        }
-      } catch (e) {
-        // Invalid URL, skip
-        continue;
-      }
-    }
-  }
-
-  console.warn("No meld summary URLs found on page");
-  return null;
-}
-
-async function tryExtractIssueIdFromMeld(
-  meldUrl: string,
-): Promise<string | null> {
-  const resp = await fetch(meldUrl, { credentials: "include" });
-  if (!resp.ok) return null;
-
-  const html = await resp.text();
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-
-  // 1) Verify Partner is Propertyware
-  const partnerEl = doc.querySelector(
-    '[data-testid="integration-resource-partner-name"]',
-  );
-  const partnerText = partnerEl?.textContent?.trim() || "";
-  if (!/propertyware/i.test(partnerText)) return null;
-
-  // 2) Get Issue ID (86481)
-  const issueIdEl = doc.querySelector<HTMLElement>(
-    '[data-testid^="meld-integration-resource-issue-id"]',
-  );
-  const issueId = issueIdEl?.textContent?.trim() || null;
-
-  return issueId && /^\d+$/.test(issueId) ? issueId : null;
-}
 
 function buildUnitSummaryUrlFromNewMeld(url: URL): string {
   const unitId = url.searchParams.get("for_unit");
@@ -530,20 +388,155 @@ function buildUnitSummaryUrlFromNewMeld(url: URL): string {
 
 function buildMeldSummaryUrlFromEditMeld(url: URL): string {
   // Extract meld ID from URL path like /2611/m/2611/meld/11765595/edit/
-  const match = url.pathname.match(/\/meld\/(\d+)\/edit/);
-  if (!match || !match[1]) {
+  const match = url.pathname.match(/^\/([^/]+\/m\/[^/]+)\/meld\/(\d+)\/edit\/?$/);
+  if (!match) {
     throw new Error("Could not extract meld ID from edit meld URL.");
   }
-  const meldId = match[1];
-
-  // Preserve the org prefix, e.g. "2611/m/2611"
-  const prefixMatch = url.pathname.match(/^\/([^/]+\/m\/[^/]+)\//);
-  if (!prefixMatch) {
-    throw new Error("Could not determine organization prefix from URL.");
-  }
-  const prefix = prefixMatch[1]; // "2611/m/2611"
-
+  const prefix = match[1];
+  const meldId = match[2];
   return `https://app.propertymeld.com/${prefix}/meld/${meldId}/summary/`;
+}
+
+function extractAddressFromUnitSummaryPage(doc: Document): string | null {
+  // Look for the Address element structure:
+  // The structure is: <dt> with "Address" text, then <dd> with the address value
+  // The address is up to the dash (e.g., "1000 N Salem St - 1000 N Salem" -> "1000 N Salem St")
+  
+  // Strategy 1: Find dt element containing "Address" text
+  const allDts = Array.from(doc.querySelectorAll<HTMLElement>("dt"));
+  for (const dt of allDts) {
+    // Check if this dt contains "Address" text (may be nested in divs/spans)
+    const dtText = dt.textContent?.trim() || "";
+    if (/^Address$/i.test(dtText)) {
+      // Find the associated dd element - could be sibling or in parent container
+      let current: HTMLElement | null = dt.parentElement;
+      while (current) {
+        const dd = current.querySelector<HTMLElement>("dd");
+        if (dd) {
+          const addressText = dd.textContent?.trim() || "";
+          if (addressText) {
+            // Extract up to the dash
+            const match = addressText.match(/^([^-]+)/);
+            if (match) {
+              const parsedAddress = match[1].trim();
+              console.log(`[ContentScript] Extracted address: "${parsedAddress}" from "${addressText}"`);
+              return parsedAddress;
+            }
+            // If no dash, return the whole text
+            console.log(`[ContentScript] Extracted address (no dash): "${addressText}"`);
+            return addressText;
+          }
+        }
+        current = current.parentElement;
+      }
+      
+      // Also check siblings
+      let sibling: Node | null = dt.nextSibling;
+      while (sibling) {
+        if (sibling.nodeType === 1) {
+          const dd = (sibling as HTMLElement).querySelector<HTMLElement>("dd");
+          if (dd) {
+            const addressText = dd.textContent?.trim() || "";
+            if (addressText) {
+              const match = addressText.match(/^([^-]+)/);
+              if (match) {
+                const parsedAddress = match[1].trim();
+                console.log(`[ContentScript] Extracted address from sibling: "${parsedAddress}"`);
+                return parsedAddress;
+              }
+              return addressText;
+            }
+          }
+        }
+        sibling = sibling.nextSibling;
+      }
+    }
+  }
+  
+  // Strategy 2: Find div/element containing "Address" text, then find nearby dd
+  const addressLabel = Array.from(
+    doc.querySelectorAll<HTMLElement>(".euiText, div, span")
+  ).find((el) => {
+    const text = el.textContent?.trim() || "";
+    return /^Address$/i.test(text);
+  });
+  
+  if (addressLabel) {
+    // Look for dd in the same parent container
+    let current: HTMLElement | null = addressLabel.parentElement;
+    while (current) {
+      const dd = current.querySelector<HTMLElement>("dd");
+      if (dd) {
+        const addressText = dd.textContent?.trim() || "";
+        if (addressText) {
+          const match = addressText.match(/^([^-]+)/);
+          if (match) {
+            const parsedAddress = match[1].trim();
+            console.log(`[ContentScript] Extracted address via label search: "${parsedAddress}"`);
+            return parsedAddress;
+          }
+          return addressText;
+        }
+      }
+      current = current.parentElement;
+    }
+  }
+  
+  // Strategy 3: Search for all dd elements and find one near "Address" text
+  const allDds = Array.from(doc.querySelectorAll<HTMLElement>("dd"));
+  for (const dd of allDds) {
+    // Check if there's an "Address" label nearby (in previous siblings or parent)
+    let current: HTMLElement | null = dd.parentElement;
+    while (current) {
+      const addressLabel = current.querySelector<HTMLElement>("dt, .euiText, div, span");
+      if (addressLabel) {
+        const labelText = addressLabel.textContent?.trim() || "";
+        if (/^Address$/i.test(labelText)) {
+          const addressText = dd.textContent?.trim() || "";
+          if (addressText) {
+            const match = addressText.match(/^([^-]+)/);
+            if (match) {
+              const parsedAddress = match[1].trim();
+              console.log(`[ContentScript] Extracted address via dd search: "${parsedAddress}"`);
+              return parsedAddress;
+            }
+            return addressText;
+          }
+        }
+      }
+      current = current.parentElement;
+    }
+  }
+  
+  console.warn("Could not find address value after Address label");
+  return null;
+}
+
+function findUnitSummaryUrlFromMeldPage(doc: Document, baseUrl: string): string | null {
+  // Look for links that match the pattern /properties/\d+/summary/
+  const allLinks = Array.from(
+    doc.querySelectorAll<HTMLAnchorElement>("a[href]"),
+  );
+
+  for (const link of allLinks) {
+    const href = link.getAttribute("href");
+    if (!href) continue;
+
+    try {
+      const fullUrl = new URL(href, baseUrl).toString();
+      // Match pattern: /properties/\d+/summary/
+      if (/\/properties\/\d+\/summary\/?(?:$|[?#])/i.test(fullUrl)) {
+        console.log(`[ContentScript] Found unit summary URL: ${fullUrl}`);
+        return fullUrl;
+      }
+    } catch (e) {
+      // Invalid URL, skip
+      continue;
+    }
+  }
+
+  console.warn("Could not find unit summary URL on meld page");
+  return null;
 }
 
 // downloads meld invoices
