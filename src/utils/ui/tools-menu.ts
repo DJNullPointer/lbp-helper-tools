@@ -1,6 +1,6 @@
 import { createToolItem, ToolItem } from "./tool-item";
 import { showLoadingSequence } from "./loading-sequence";
-import { executeTool } from "../tools/handlers";
+import { executeTool, setCurrentLoadingContainer } from "../tools/handlers";
 import { showSnackbar } from "./snackbar";
 
 export interface ToolsMenuOptions {
@@ -89,13 +89,18 @@ function createCategorySection(
 
           // Show loading sequence with work promise - checkmark will show when work completes
           try {
+            // Set the container reference for progress updates
+            setCurrentLoadingContainer(menuContainer);
             await showLoadingSequence({
               container: menuContainer,
               message: `Running ${clickedTool.name}...`,
               workPromise: workPromise,
             });
+            // Clear the container reference when done
+            setCurrentLoadingContainer(null);
             // Checkmark animation is sufficient for success - no snackbar needed
           } catch (error) {
+            setCurrentLoadingContainer(null);
             // If error occurs, restore the menu and show error snackbar
             createToolsMenu({ container: menuContainer });
             showSnackbar(

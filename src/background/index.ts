@@ -53,6 +53,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async
   }
 
+  // RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY (for edit-meld) -----------------------
+  if (message.type === "RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY") {
+    (async () => {
+      try {
+        const issueId = await resolveIssueIdFromMeldSummary(
+          message.meldSummaryUrl as string,
+        );
+        if (!issueId) {
+          sendResponse({
+            success: false,
+            error: "No Propertyware Issue ID found on meld summary page.",
+          });
+          return;
+        }
+        sendResponse({ success: true, issueId });
+      } catch (err: any) {
+        console.error("RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
   // Simple HTML fetch passthrough ---------------------------------------------
   if (message.type === "FETCH_PROPERTYWARE_PAGE") {
     fetchPropertyWarePage(message.url as string)
@@ -86,6 +109,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       message: "Clipboard operation should be in content script",
     });
     return false;
+  }
+
+  // DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS -------------------------------------
+  if (message.type === "DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS") {
+    (async () => {
+      try {
+        const onProgress = (current: number, total: number, detail?: string) => {
+          // Send progress update to any listening popup
+          chrome.runtime.sendMessage({
+            type: "INVOICE_DOWNLOAD_PROGRESS",
+            current,
+            total,
+            detail,
+          }).catch(() => {
+            // Ignore errors if no listener (popup might be closed)
+          });
+        };
+        
+        const result = await downloadInvoicesFromPaymentPages(
+          message.paymentSummaryUrls as string[],
+          onProgress,
+        );
+        sendResponse({ success: true, ...result });
+      } catch (err: any) {
+        console.error("DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
   }
 
   // Unhandled message ---------------------------------------------------------
@@ -125,6 +177,177 @@ async function handleDownloads(
   }
 
   console.log(`[Background] Finished processing ${urls.length} downloads`);
+}
+
+//
+// -------------------- MELD INVOICE DOWNLOADS (from payments page) ----------
+//
+
+async function downloadInvoicesFromPaymentPages(
+  paymentSummaryUrls: string[],
+  onProgress?: (current: number, total: number, detail?: string) => void,
+): Promise<{ count: number; urls: string[] }> {
+  const total = paymentSummaryUrls.length;
+  console.log(
+    `[InvoiceDownload] Starting download of ${total} invoices`,
+  );
+
+  const downloadedUrls: string[] = [];
+  const CONCURRENT_LIMIT = 5; // Process 5 tabs at a time to avoid overwhelming RAM
+  let completedCount = 0;
+
+  // Process URLs in batches
+  for (let i = 0; i < paymentSummaryUrls.length; i += CONCURRENT_LIMIT) {
+    const batch = paymentSummaryUrls.slice(i, i + CONCURRENT_LIMIT);
+    const batchNumber = Math.floor(i / CONCURRENT_LIMIT) + 1;
+    const totalBatches = Math.ceil(paymentSummaryUrls.length / CONCURRENT_LIMIT);
+    
+    console.log(
+      `[InvoiceDownload] Processing batch ${batchNumber}/${totalBatches} (${batch.length} invoices)`,
+    );
+
+    // Process batch concurrently
+    const batchPromises = batch.map(async (url, batchIndex) => {
+      const globalIndex = i + batchIndex;
+      
+      // Update progress when starting each download
+      if (onProgress) {
+        onProgress(globalIndex + 1, total, `Downloading invoice ${globalIndex + 1} of ${total}`);
+      }
+      
+      const result = await downloadInvoiceFromPaymentPage(url);
+      
+      if (result) {
+        downloadedUrls.push(result);
+        completedCount++;
+        // Update progress after each successful download
+        if (onProgress) {
+          onProgress(completedCount, total, `Downloading invoice ${completedCount + 1} of ${total}`);
+        }
+      }
+      
+      return result;
+    });
+
+    const batchResults = await Promise.allSettled(batchPromises);
+    for (const result of batchResults) {
+      if (result.status === "rejected") {
+        console.warn(
+          `[InvoiceDownload] Failed to download invoice:`,
+          result.reason,
+        );
+      }
+    }
+
+    // Small delay between batches to avoid overwhelming the browser
+    if (i + CONCURRENT_LIMIT < paymentSummaryUrls.length) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
+  console.log(
+    `[InvoiceDownload] Successfully downloaded ${downloadedUrls.length} of ${total} invoices`,
+  );
+
+  if (onProgress) {
+    onProgress(total, total, `Complete! Downloaded ${downloadedUrls.length} invoices`);
+  }
+
+  return {
+    count: downloadedUrls.length,
+    urls: downloadedUrls,
+  };
+}
+
+async function downloadInvoiceFromPaymentPage(
+  paymentSummaryUrl: string,
+): Promise<string | null> {
+  // 1. Open background tab to payment summary page
+  const tab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
+    chrome.tabs.create({ url: paymentSummaryUrl, active: false }, (t) => {
+      if (chrome.runtime.lastError || !t || t.id === undefined) {
+        reject(
+          new Error(
+            chrome.runtime.lastError?.message ||
+              "Failed to create tab for payment page",
+          ),
+        );
+      } else {
+        resolve(t);
+      }
+    });
+  });
+
+  const tabId = tab.id!;
+  try {
+    // 2. Wait for tab to load
+    await waitForTabComplete(tabId);
+    
+    // 3. Give SPA time to render
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // 4. Ask content script to find and return the download URL
+    let result: {
+      success?: boolean;
+      downloadUrl?: string;
+      error?: string;
+    } | null = null;
+
+    const maxAttempts = 5;
+    const maxWaitTime = 5000;
+    const startTime = Date.now();
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        result = (await chrome.tabs.sendMessage(tabId, {
+          type: "GET_INVOICE_DOWNLOAD_URL",
+        })) as {
+          success?: boolean;
+          downloadUrl?: string;
+          error?: string;
+        };
+        if (result && result.success && result.downloadUrl) {
+          break;
+        }
+      } catch (err: any) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > maxWaitTime) {
+          console.warn("Timeout waiting for content script response");
+          break;
+        }
+        const delay = Math.min(100 * Math.pow(2, attempt), 500);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    if (!result || !result.success || !result.downloadUrl) {
+      console.warn(
+        `[InvoiceDownload] Could not find download URL for ${paymentSummaryUrl}`,
+        result,
+      );
+      return null;
+    }
+
+    // 5. Build full download URL and download
+    const downloadUrl = new URL(
+      result.downloadUrl,
+      paymentSummaryUrl,
+    ).toString();
+
+    console.log(`[InvoiceDownload] Downloading invoice from: ${downloadUrl}`);
+    await chrome.downloads.download({
+      url: downloadUrl,
+      saveAs: false,
+    });
+
+    // Small delay between downloads
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    return downloadUrl;
+  } finally {
+    // 6. Clean up background tab
+    chrome.tabs.remove(tabId);
+  }
 }
 
 //
@@ -207,6 +430,15 @@ async function resolveIssueIdFromUnitSummary(
     // 5. Clean up the background tab
     chrome.tabs.remove(tabId);
   }
+}
+
+async function resolveIssueIdFromMeldSummary(
+  meldSummaryUrl: string,
+): Promise<string | null> {
+  // Directly extract Issue ID from the meld summary page
+  // (no need to find meld URL first, we already have it)
+  const issueId = await extractIssueIdFromMeldTab(meldSummaryUrl);
+  return issueId || null;
 }
 
 function waitForTabComplete(tabId: number): Promise<void> {
@@ -412,9 +644,9 @@ async function fetchPropertywareSummary(issueId: string): Promise<string> {
   console.log(`[Propertyware] Step 3: Fetching unit detail page (fresh, no cache)...`);
   const unitHtml = await fetchPwHtml(unitUrl);
 
-  // 5) Build the final text summary from both pages
+  // 5) Build the final text summary from unit detail page only
   console.log(`[Propertyware] Step 4: Building summary from fresh data...`);
-  return buildSummaryFromPwPages(unitHtml, woHtml);
+  return buildSummaryFromPwPages(unitHtml);
 }
 
 async function postPwSearch(issueId: string): Promise<string> {
@@ -476,7 +708,7 @@ function extractWorkOrderUrlFromSearch(
   // Find ALL work order links in the search results
   const allWorkOrderLinks = Array.from(
     doc.querySelectorAll<HTMLAnchorElement>(
-      "a[href*='maintenance/work_order_detail.do']",
+    "a[href*='maintenance/work_order_detail.do']",
     ),
   );
 
@@ -495,7 +727,7 @@ function extractWorkOrderUrlFromSearch(
     // Check if this row contains the Issue ID
     const rowText = row.textContent || "";
     if (rowText.includes(issueId)) {
-      const href = a.getAttribute("href");
+  const href = a.getAttribute("href");
       if (href) {
         const fullUrl = new URL(
           href,
@@ -540,8 +772,8 @@ function extractUnitDetailUrlFromWorkOrder(html: string): string | null {
     );
     // Fallback to finding any unit detail link
     const fallbackLink = doc.querySelector<HTMLAnchorElement>(
-      "a[href*='properties/unit_detail.do']",
-    );
+    "a[href*='properties/unit_detail.do']",
+  );
     if (fallbackLink) {
       const href = fallbackLink.getAttribute("href");
       if (href) {
@@ -608,10 +840,8 @@ function extractUnitDetailUrlFromWorkOrder(html: string): string | null {
 
 function buildSummaryFromPwPages(
   unitHtml: string,
-  workOrderHtml: string,
 ): string {
   const { document: unitDoc } = parseHTML(unitHtml);
-  const { document: woDoc } = parseHTML(workOrderHtml);
 
   const lines: string[] = [];
 
@@ -636,12 +866,7 @@ function buildSummaryFromPwPages(
     lines.push("No tenant info found");
   }
 
-  // REQUESTED BY / SECURITY / KEYS ----------------------------------------------
-  const requestedBy = extractRequestedBy(woDoc);
-  if (requestedBy) {
-    lines.push(`Requested By: ${requestedBy}`);
-  }
-
+  // SECURITY / KEYS --------------------------------------------------------------
   const securityLine = extractSecurityInfo(unitDoc);
   if (securityLine) {
     lines.push(securityLine);
@@ -653,16 +878,6 @@ function buildSummaryFromPwPages(
       "---------------------------------------------------------------------------------------------------",
     );
     lines.push(keyInfo);
-  }
-
-  // VENDOR DESCRIPTION / PROBLEM DESCRIPTION -------------------------------------
-  const vendorDescription = extractVendorDescription(woDoc);
-  if (vendorDescription) {
-    lines.push(
-      "---------------------------------------------------------------------------------------------------",
-    );
-    lines.push("Vendor Description:");
-    lines.push(vendorDescription);
   }
 
   // GENERAL PROPERTY INFO (shutoffs, heaters, etc) --------------------------------
@@ -832,17 +1047,6 @@ function extractTenantLines(unitDoc: Document): string[] {
 }
 
 //
-// ---------- REQUESTED BY (Work Order) ----------------------------------------
-//
-
-function extractRequestedBy(woDoc: Document): string | null {
-  return (
-    getValueFromLabel(woDoc, /^Requested By/i) ||
-    getValueFromLabel(woDoc, /Requested By:/i)
-  );
-}
-
-//
 // ---------- SECURITY ----------------------------------------------------------
 //
 
@@ -889,29 +1093,6 @@ function extractKeyInfo(unitDoc: Document): string | null {
   ].filter(Boolean);
 
   return parts.join(" ");
-}
-
-//
-// ---------- VENDOR DESCRIPTION (Work Order) ----------------------------------
-//
-
-function extractVendorDescription(woDoc: Document): string | null {
-  const mainDesc =
-    getHtmlFromLabel(woDoc, /^Description$/i) ||
-    getHtmlFromLabel(woDoc, /^Work Order Description/i) ||
-    getHtmlFromLabel(woDoc, /^Vendor Description/i);
-
-  const residentNotes =
-    getHtmlFromLabel(woDoc, /Resident said/i) ||
-    getHtmlFromLabel(woDoc, /Additional Details/i);
-
-  const parts: string[] = [];
-  if (mainDesc) parts.push(mainDesc);
-  if (residentNotes) parts.push(residentNotes);
-
-  if (!parts.length) return null;
-
-  return parts.join("\n");
 }
 
 //

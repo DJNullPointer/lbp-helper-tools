@@ -3,12 +3,13 @@ export interface LoadingSequenceOptions {
   message?: string;
   workPromise?: Promise<void>;
   onComplete?: () => void;
+  onProgress?: (current: number, total: number, message?: string) => void;
 }
 
 export function showLoadingSequence(
   options: LoadingSequenceOptions,
 ): Promise<void> {
-  const { container, message = "Processing...", workPromise, onComplete } = options;
+  const { container, message = "Processing...", workPromise, onComplete, onProgress } = options;
 
   return new Promise((resolve, reject) => {
     const loadingContainer = document.createElement("div");
@@ -26,8 +27,37 @@ export function showLoadingSequence(
     messageEl.className = "loading-message";
     messageEl.textContent = message;
 
+    // Progress indicator (hidden by default)
+    const progressEl = document.createElement("div");
+    progressEl.className = "loading-progress";
+    progressEl.style.display = "none";
+    progressEl.style.marginTop = "8px";
+    progressEl.style.fontSize = "0.75rem";
+    progressEl.style.color = "#9ca3af";
+
     loadingContainer.appendChild(spinner);
     loadingContainer.appendChild(messageEl);
+    loadingContainer.appendChild(progressEl);
+
+    // Expose update function for progress tracking
+    (loadingContainer as any).updateProgress = (current: number, total: number, detailMessage?: string) => {
+      if (total > 0) {
+        progressEl.style.display = "block";
+        // Only show the simple progress text, not the detail message in parentheses
+        if (detailMessage && detailMessage.includes("Complete!")) {
+          // For completion, show the detail message
+          progressEl.textContent = detailMessage;
+          messageEl.textContent = "Complete!";
+        } else {
+          // For in-progress, show simple "X of Y" format
+          progressEl.textContent = `${current} of ${total}`;
+          messageEl.textContent = detailMessage || message;
+        }
+      }
+      if (onProgress) {
+        onProgress(current, total, detailMessage);
+      }
+    };
 
     container.innerHTML = "";
     container.appendChild(loadingContainer);

@@ -140,6 +140,67 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async response
   }
 
+  if (message.type === "GET_INVOICE_DOWNLOAD_URL") {
+    // Get the invoice download URL from the current payment summary page
+    (async () => {
+      try {
+        // Wait for page to be ready
+        if (document.readyState !== "complete") {
+          await new Promise((resolve) => {
+            if (document.readyState === "complete") {
+              resolve(undefined);
+            } else {
+              window.addEventListener("load", () => resolve(undefined), {
+                once: true,
+              });
+            }
+          });
+        }
+
+        // Wait for SPA to render - look for download link
+        await waitForSPAReady(
+          [
+            'a[href*="/invoices/"][href*="/download/"]',
+            '.euiLink[href*="download"]',
+            'a[href*="download"]',
+          ],
+          5000,
+        );
+
+        // Find the download link
+        const downloadLink = document.querySelector<HTMLAnchorElement>(
+          'a[href*="/invoices/"][href*="/download/"]',
+        );
+
+        if (!downloadLink) {
+          sendResponse({
+            success: false,
+            error: "Could not find invoice download link on this page",
+          });
+          return;
+        }
+
+        const href = downloadLink.getAttribute("href");
+        if (!href) {
+          sendResponse({
+            success: false,
+            error: "Download link has no href attribute",
+          });
+          return;
+        }
+
+        sendResponse({ success: true, downloadUrl: href });
+      } catch (err: any) {
+        console.error("GET_INVOICE_DOWNLOAD_URL error", err);
+        sendResponse({
+          success: false,
+          error: err?.message || String(err),
+        });
+      }
+    })();
+    return true; // async response
+  }
+
   if (message.type === "EXTRACT_ISSUE_ID_FROM_MELD") {
     // Extract Issue ID directly from the meld page DOM (handles SPA)
     (async () => {
@@ -200,12 +261,13 @@ async function handleCopyRelevantInfo(): Promise<string> {
 
   const isUnitSummary = /\/properties\/\d+\/summary\/?$/.test(url.pathname);
   const isNewMeld = /\/melds\/new-meld\/?$/.test(url.pathname);
+  const isEditMeld = /\/meld\/\d+\/edit\/?$/.test(url.pathname);
   
-  console.log(`[ContentScript] Page type - Unit Summary: ${isUnitSummary}, New Meld: ${isNewMeld}`);
+  console.log(`[ContentScript] Page type - Unit Summary: ${isUnitSummary}, New Meld: ${isNewMeld}, Edit Meld: ${isEditMeld}`);
 
-  if (!isUnitSummary && !isNewMeld) {
+  if (!isUnitSummary && !isNewMeld && !isEditMeld) {
     throw new Error(
-      "This tool only works on Meld Unit Summary or Meld Creation pages.\n" +
+      "This tool only works on Meld Unit Summary, Meld Creation, or Meld Edit pages.\n" +
         "Please navigate to those pages first.",
     );
   }
@@ -213,10 +275,10 @@ async function handleCopyRelevantInfo(): Promise<string> {
   let issueId: string | null = null;
 
   if (isUnitSummary) {
-    // We’re already on the page that has the meld links
+    // We're already on the page that has the meld links
     issueId = await getIssueIdFromCurrentUnitSummaryPage();
   } else if (isNewMeld) {
-    // We’re on new-meld → derive unit summary URL and let the background
+    // We're on new-meld → derive unit summary URL and let the background
     // spin up a hidden tab to scrape it
     const unitSummaryUrl = buildUnitSummaryUrlFromNewMeld(url);
     console.log("unit summary url is:", unitSummaryUrl);
@@ -234,6 +296,28 @@ async function handleCopyRelevantInfo(): Promise<string> {
       throw new Error(
         resp?.error ||
           "Could not resolve Propertyware Issue ID from unit summary page.",
+      );
+    }
+    issueId = resp.issueId ?? null;
+  } else if (isEditMeld) {
+    // We're on edit-meld → derive meld summary URL and let the background
+    // spin up a hidden tab to extract Issue ID from the meld summary page
+    const meldSummaryUrl = buildMeldSummaryUrlFromEditMeld(url);
+    console.log("meld summary url is:", meldSummaryUrl);
+
+    const resp = (await chrome.runtime.sendMessage({
+      type: "RESOLVE_ISSUE_ID_FROM_MELD_SUMMARY",
+      meldSummaryUrl,
+    })) as {
+      success: boolean;
+      issueId?: string;
+      error?: string;
+    };
+
+    if (!resp || !resp.success) {
+      throw new Error(
+        resp?.error ||
+          "Could not resolve Propertyware Issue ID from meld summary page.",
       );
     }
     issueId = resp.issueId ?? null;
@@ -444,75 +528,120 @@ function buildUnitSummaryUrlFromNewMeld(url: URL): string {
   return `https://app.propertymeld.com/${prefix}/properties/${unitId}/summary/`;
 }
 
+function buildMeldSummaryUrlFromEditMeld(url: URL): string {
+  // Extract meld ID from URL path like /2611/m/2611/meld/11765595/edit/
+  const match = url.pathname.match(/\/meld\/(\d+)\/edit/);
+  if (!match || !match[1]) {
+    throw new Error("Could not extract meld ID from edit meld URL.");
+  }
+  const meldId = match[1];
+
+  // Preserve the org prefix, e.g. "2611/m/2611"
+  const prefixMatch = url.pathname.match(/^\/([^/]+\/m\/[^/]+)\//);
+  if (!prefixMatch) {
+    throw new Error("Could not determine organization prefix from URL.");
+  }
+  const prefix = prefixMatch[1]; // "2611/m/2611"
+
+  return `https://app.propertymeld.com/${prefix}/meld/${meldId}/summary/`;
+}
+
 // downloads meld invoices
 
 async function handleDownloadMeldInvoices(): Promise<{
   count: number;
   urls: string[];
 }> {
-  // TODO: Update this pattern to match the specific invoice page URL structure
-  // For now, checking if we're on PropertyMeld domain
-  if (!window.location.hostname.includes("propertymeld.com")) {
+  const currentUrl = window.location.href;
+  console.log(`[DownloadInvoices] Processing from: ${currentUrl}`);
+
+  // Check URL pattern: app.propertymeld.com/.../melds/payments/ with any query params
+  const url = new URL(currentUrl);
+  if (!url.hostname.includes("propertymeld.com")) {
     throw new Error("This tool only works on PropertyMeld");
   }
 
-  // Add specific page pattern check here once the invoice page URL structure is known
-  // Example: const url = window.location.href;
-  // const invoicePagePattern = /https:\/\/app\.propertymeld\.com\/invoices/;
-  // if (!invoicePagePattern.test(url)) { throw new Error("..."); }
-
-  // TODO: Implement actual scraping logic based on PropertyMeld's invoice page structure
-
-  // Example: Find all invoice download links
-  const invoiceLinks = document.querySelectorAll<HTMLAnchorElement>(
-    'a[href*="invoice"], a[href*="download"], button[data-invoice-id]',
-  );
-
-  if (invoiceLinks.length === 0) {
-    throw new Error("No invoices found on this page");
+  const paymentsPagePattern = /\/melds\/payments\/?(?:\?|$)/;
+  if (!paymentsPagePattern.test(url.pathname)) {
+    throw new Error(
+      "This tool only works on the Meld Payments page (URL pattern: .../melds/payments/...)",
+    );
   }
 
-  const invoiceUrls: string[] = [];
-  const filenames: string[] = [];
+  // Wait for SPA to render
+  await waitForSPAReady(
+    [
+      '[data-testid^="meld-invoice-list-card"]',
+      '.invoice-card',
+      'a[href*="/melds/payments/"]',
+    ],
+    5000,
+  );
 
-  invoiceLinks.forEach((link) => {
-    let url = link.href;
+  // Find all invoice cards
+  const invoiceCards = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-testid^="meld-invoice-list-card"]',
+    ),
+  );
 
-    // If it's a button, we might need to trigger a click or extract data attribute
-    if (link.tagName === "BUTTON") {
-      const dataUrl =
-        link.getAttribute("data-url") || link.getAttribute("data-href");
-      if (dataUrl) url = dataUrl;
+  console.log(`[DownloadInvoices] Found ${invoiceCards.length} invoice cards`);
+
+  if (invoiceCards.length === 0) {
+    throw new Error("No invoice cards found on this page");
+  }
+
+  // Extract payment summary URLs from each card (deduplicated)
+  const paymentSummaryUrls: string[] = [];
+  const seenUrls = new Set<string>(); // Deduplication set
+  
+  for (const card of invoiceCards) {
+    // Find the link to the payment summary page
+    const summaryLink = card.querySelector<HTMLAnchorElement>(
+      'a[href*="/melds/payments/"][href*="/summary/"]',
+    );
+    if (summaryLink) {
+      const href = summaryLink.getAttribute("href");
+      if (href) {
+        const fullUrl = new URL(href, currentUrl).toString();
+        // Normalize URL (remove trailing slash, hash, etc.) for better deduplication
+        const normalizedUrl = fullUrl.split('#')[0].replace(/\/$/, '');
+        
+        if (!seenUrls.has(normalizedUrl)) {
+          seenUrls.add(normalizedUrl);
+          paymentSummaryUrls.push(fullUrl);
+        } else {
+          console.log(`[DownloadInvoices] Skipping duplicate URL: ${fullUrl}`);
+        }
+      }
     }
+  }
 
-    if (url && !invoiceUrls.includes(url)) {
-      invoiceUrls.push(url);
-      // Try to extract filename from link text or data attribute
-      const filename =
-        link.textContent?.trim() || link.getAttribute("download") || undefined;
-      if (filename) filenames.push(filename);
-    }
-  });
+  console.log(
+    `[DownloadInvoices] Found ${paymentSummaryUrls.length} unique payment summary URLs (${invoiceCards.length} total cards)`,
+  );
 
-  // Send download request to background worker and wait for confirmation
+  if (paymentSummaryUrls.length === 0) {
+    throw new Error("Could not find any payment summary links");
+  }
+
+  // Send to background script to handle concurrent downloads
   const response = (await chrome.runtime.sendMessage({
-    type: "DOWNLOAD_FILES",
-    urls: invoiceUrls,
-    filenames: filenames.length > 0 ? filenames : undefined,
+    type: "DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS",
+    paymentSummaryUrls,
   })) as {
     success: boolean;
+    count?: number;
+    urls?: string[];
     error?: string;
   };
 
   if (!response || !response.success) {
-    throw new Error(response?.error || "Failed to queue downloads");
+    throw new Error(response?.error || "Failed to download invoices");
   }
 
-  // Give downloads a moment to start
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
   return {
-    count: invoiceUrls.length,
-    urls: invoiceUrls,
+    count: response.count || 0,
+    urls: response.urls || [],
   };
 }

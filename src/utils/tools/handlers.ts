@@ -4,62 +4,32 @@
 import { ToolItem } from "../ui/tool-item";
 import { sendMessageToActiveTab, sendMessageToContentScript, getActiveTab, matchesUrlPattern } from "../messaging";
 
-// Robust clipboard copy that tries multiple methods
+// Copy to clipboard using content script (has page context, most reliable)
 async function copyToClipboardRobust(text: string): Promise<void> {
   console.log(`[Clipboard] Attempting to copy text (${text.length} chars)`);
 
-  // Method 1: Use content script to copy (has page context, most reliable)
-  try {
-    const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (currentTab?.id) {
-      const response = await sendMessageToContentScript(
-        currentTab.id,
-        {
-          type: "COPY_TEXT_TO_CLIPBOARD",
-          text,
-        },
-      );
-      if (response.success) {
-        console.log(`[Clipboard] Successfully copied via content script`);
-        // Small delay to ensure clipboard operation completes
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        return;
-      }
-    }
-  } catch (err: any) {
-    console.warn("[Clipboard] Content script copy failed:", err);
+  const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!currentTab?.id) {
+    throw new Error("No active tab found for clipboard operation");
   }
 
-  // Method 2: Fallback - create temporary textarea in popup
-  try {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.style.position = "fixed";
-    textarea.style.left = "-999999px";
-    textarea.style.top = "-999999px";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    
-    textarea.focus();
-    textarea.select();
-    textarea.setSelectionRange(0, text.length);
-    
-    const successful = document.execCommand("copy");
-    document.body.removeChild(textarea);
-    
-    if (successful) {
-      console.log(`[Clipboard] Successfully copied via execCommand fallback`);
-      // Small delay to ensure clipboard operation completes
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      return;
-    }
-  } catch (err: any) {
-    console.warn("[Clipboard] execCommand fallback failed:", err);
-  }
-
-  throw new Error(
-    "Failed to copy to clipboard. Please ensure the page has focus and try again.",
+  const response = await sendMessageToContentScript(
+    currentTab.id,
+    {
+      type: "COPY_TEXT_TO_CLIPBOARD",
+      text,
+    },
   );
+
+  if (!response.success) {
+    throw new Error(
+      response.error || "Failed to copy to clipboard. Please ensure the page has focus and try again.",
+    );
+  }
+
+  console.log(`[Clipboard] Successfully copied via content script`);
+  // Small delay to ensure clipboard operation completes
+  await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
 export async function executeTool(tool: ToolItem): Promise<void> {
@@ -92,34 +62,34 @@ async function executeCopyRelevantInfo(): Promise<void> {
     
     // Always get the CURRENT active tab fresh (no caching)
     const [currentTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
+  
     if (!currentTab) {
       throw new Error("No active tab found");
     }
     
     if (!currentTab.url) {
-      throw new Error("Could not determine current tab URL");
-    }
+    throw new Error("Could not determine current tab URL");
+  }
 
     console.log(`[CopyTool] Active tab URL: ${currentTab.url}`);
 
-    // Basic domain check - detailed page validation happens in content scripts
+  // Basic domain check - detailed page validation happens in content scripts
     if (!matchesUrlPattern(currentTab.url, "propertymeld.com")) {
-      throw new Error(
-        "This tool only works on Meld Unit View or Meld Creation pages.\n" +
-        "Please navigate to those pages first."
-      );
-    }
+    throw new Error(
+      "This tool only works on Meld Create or Meld Edit pages.\n" +
+      "Please go to those pages first."
+    );
+  }
 
     if (!currentTab.id) {
-      throw new Error("Could not access tab");
-    }
+    throw new Error("Could not access tab");
+  }
 
     // Send message to the specific current tab (not using cached reference)
     const response = await sendMessageToContentScript<{ text?: string }>(
       currentTab.id,
       {
-        type: "COPY_RELEVANT_INFO",
+      type: "COPY_RELEVANT_INFO",
       },
     );
 
@@ -150,7 +120,14 @@ async function executeCopyRelevantInfo(): Promise<void> {
     throw error;
   } finally {
     copyOperationInProgress = false;
-  }
+  } 
+}
+
+// Store reference to current loading container for progress updates
+let currentLoadingContainer: HTMLElement | null = null;
+
+export function setCurrentLoadingContainer(container: HTMLElement | null): void {
+  currentLoadingContainer = container;
 }
 
 async function executeMeldDownloadInvoices(): Promise<void> {
@@ -172,6 +149,22 @@ async function executeMeldDownloadInvoices(): Promise<void> {
     throw new Error("Could not access tab");
   }
 
+  // Set up progress listener before starting download
+  const progressListener = (message: any) => {
+    if (message.type === "INVOICE_DOWNLOAD_PROGRESS" && currentLoadingContainer) {
+      const loadingContainer = currentLoadingContainer.querySelector(".loading-sequence") as HTMLElement;
+      if (loadingContainer && (loadingContainer as any).updateProgress) {
+        (loadingContainer as any).updateProgress(
+          message.current || 0,
+          message.total || 0,
+          message.detail || "Downloading invoices...",
+        );
+      }
+    }
+  };
+
+  chrome.runtime.onMessage.addListener(progressListener);
+
   try {
     const response = await sendMessageToActiveTab({
       type: "DOWNLOAD_MELD_INVOICES",
@@ -188,6 +181,9 @@ async function executeMeldDownloadInvoices(): Promise<void> {
       );
     }
     throw error;
+  } finally {
+    // Clean up progress listener
+    chrome.runtime.onMessage.removeListener(progressListener);
   }
 }
 
