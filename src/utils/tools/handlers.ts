@@ -37,6 +37,9 @@ export async function executeTool(tool: ToolItem): Promise<void> {
     case "copy-relevant-info":
       await executeCopyRelevantInfo();
       break;
+    case "open-propertyware-page":
+      await executeOpenPropertyWarePage();
+      break;
     case "meld-download-all-invoices":
       await executeMeldDownloadInvoices();
       break;
@@ -128,6 +131,49 @@ let currentLoadingContainer: HTMLElement | null = null;
 
 export function setCurrentLoadingContainer(container: HTMLElement | null): void {
   currentLoadingContainer = container;
+}
+
+async function executeOpenPropertyWarePage(): Promise<void> {
+  const tab = await getActiveTab();
+  
+  if (!tab.url) {
+    throw new Error("Could not determine current tab URL");
+  }
+
+  // Basic domain check - detailed page validation happens in content script
+  if (!matchesUrlPattern(tab.url, "propertymeld.com")) {
+    throw new Error(
+      "This tool only works on PropertyMeld.\n" +
+      "Please navigate to PropertyMeld first."
+    );
+  }
+
+  if (!tab.id) {
+    throw new Error("Could not access tab");
+  }
+
+  const response = await sendMessageToContentScript<{ url?: string }>(
+    tab.id,
+    {
+      type: "OPEN_PROPERTYWARE_PAGE",
+    },
+  );
+
+  if (!response.success) {
+    throw new Error(response.error || "Failed to open PropertyWare page");
+  }
+
+  if (response.data?.url) {
+    // Open the PropertyWare URL in a new tab right after the current one (but don't switch to it)
+    const tabIndex = tab.index !== undefined ? tab.index + 1 : undefined;
+    await chrome.tabs.create({ 
+      url: response.data.url, 
+      active: false,
+      index: tabIndex,
+    });
+  } else {
+    throw new Error("No PropertyWare URL returned");
+  }
 }
 
 async function executeMeldDownloadInvoices(): Promise<void> {

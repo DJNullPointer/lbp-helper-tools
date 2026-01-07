@@ -107,12 +107,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           });
         }
 
-        // Wait for SPA to render - look for download link
+        // Wait for SPA to render - look for download link and meld number
         await waitForSPAReady(
           [
             'a[href*="/invoices/"][href*="/download/"]',
             '.euiLink[href*="download"]',
             'a[href*="download"]',
+            '[data-testid="invoice-detail-meld-number"]',
           ],
           5000,
         );
@@ -139,7 +140,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           return;
         }
 
-        sendResponse({ success: true, downloadUrl: href });
+        // Extract meld number from the page
+        const meldNumberElement = document.querySelector<HTMLElement>(
+          '[data-testid="invoice-detail-meld-number"]',
+        );
+        let meldNumber: string | null = null;
+        
+        if (meldNumberElement) {
+          // The meld number is in a button inside an anchor tag
+          const button = meldNumberElement.querySelector<HTMLButtonElement>('button, a');
+          if (button) {
+            meldNumber = button.textContent?.trim() || null;
+            console.log(`[ContentScript] Extracted meld number: ${meldNumber}`);
+          }
+        }
+
+        sendResponse({ success: true, downloadUrl: href, meldNumber });
       } catch (err: any) {
         console.error("GET_INVOICE_DOWNLOAD_URL error", err);
         sendResponse({
@@ -171,9 +187,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // Wait for SPA to render - look for Address element
         await waitForSPAReady(
           [
-            'dt:has-text("Address")',
+            'dt',
             '[data-testid*="address"]',
-            '.euiText',
+            '.euiFlexGroup',
             'body',
           ],
           5000,
@@ -247,6 +263,120 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async response
   }
 
+  if (message.type === "OPEN_PROPERTYWARE_PAGE") {
+    // Open corresponding PropertyWare page based on current Meld page
+    (async () => {
+      try {
+        const currentUrl = window.location.href;
+        const url = new URL(currentUrl);
+        
+        const isUnitSummary = /\/properties\/\d+\/summary\/?$/.test(url.pathname);
+        const isMeldSummary = /\/meld\/\d+\/summary\/?$/.test(url.pathname);
+        
+        if (!isUnitSummary && !isMeldSummary) {
+          sendResponse({
+            success: false,
+            error: "This tool only works on Meld unit summary or meld summary pages.",
+          });
+          return;
+        }
+
+        let propertyWareUrl: string;
+
+        if (isUnitSummary) {
+          // Extract address and get building ID, then build unit detail URL
+          await waitForSPAReady(['dt', '.euiFlexGroup', 'body'], 5000);
+          const address = extractAddressFromUnitSummaryPage(document);
+          
+          if (!address) {
+            sendResponse({
+              success: false,
+              error: "Could not extract address from unit summary page",
+            });
+            return;
+          }
+
+          const resp = (await chrome.runtime.sendMessage({
+            type: "GET_BUILDING_ID_FROM_ADDRESS",
+            address,
+          })) as {
+            success: boolean;
+            buildingId?: number;
+            error?: string;
+          };
+
+          if (!resp || !resp.success || !resp.buildingId) {
+            sendResponse({
+              success: false,
+              error: resp?.error || "Could not find building ID for address",
+            });
+            return;
+          }
+
+          propertyWareUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${resp.buildingId}`;
+        } else {
+          // Meld summary page: extract address and issue ID, then get work order
+          await waitForSPAReady(
+            [
+              '[data-testid="meld-details-unit-or-property-address"]',
+              '.euiFlexGroup',
+              'body',
+            ],
+            5000,
+          );
+
+          const address = extractAddressFromMeldSummaryPage(document);
+          const issueId = extractIssueIdFromMeldSummaryPage(document);
+
+          if (!address) {
+            sendResponse({
+              success: false,
+              error: "Could not extract address from meld summary page",
+            });
+            return;
+          }
+
+          if (!issueId) {
+            sendResponse({
+              success: false,
+              error: "Could not extract Issue ID from meld summary page",
+            });
+            return;
+          }
+
+          const resp = (await chrome.runtime.sendMessage({
+            type: "GET_PROPERTYWARE_WORK_ORDER_URL",
+            address,
+            issueId,
+          })) as {
+            success: boolean;
+            url?: string;
+            error?: string;
+          };
+
+          if (!resp || !resp.success || !resp.url) {
+            sendResponse({
+              success: false,
+              error: resp?.error || "Could not find PropertyWare work order",
+            });
+            return;
+          }
+
+          propertyWareUrl = resp.url;
+        }
+
+        sendResponse({ success: true, data: { url: propertyWareUrl } });
+      } catch (err: any) {
+        console.error("OPEN_PROPERTYWARE_PAGE error", err);
+        sendResponse({
+          success: false,
+          error: err?.message || String(err),
+        });
+      }
+    })();
+    return true; // async response
+  }
+
   return false;
 });
 
@@ -282,9 +412,9 @@ async function handleCopyRelevantInfo(): Promise<string> {
       // Wait for SPA to render if address not found immediately
       await waitForSPAReady(
         [
-          'dt:has-text("Address")',
+          'dt',
           '[data-testid*="address"]',
-          '.euiText',
+          '.euiFlexGroup',
           'body',
         ],
         5000,
@@ -398,24 +528,20 @@ function buildMeldSummaryUrlFromEditMeld(url: URL): string {
 }
 
 function extractAddressFromUnitSummaryPage(doc: Document): string | null {
-  // Look for the Address element structure:
-  // The structure is: <dt> with "Address" text, then <dd> with the address value
-  // The address is up to the dash (e.g., "1000 N Salem St - 1000 N Salem" -> "1000 N Salem St")
-  
-  // Strategy 1: Find dt element containing "Address" text
+  // Find the dt element containing "Address" text, then find the dd in the same euiFlexGroup
   const allDts = Array.from(doc.querySelectorAll<HTMLElement>("dt"));
+  
   for (const dt of allDts) {
-    // Check if this dt contains "Address" text (may be nested in divs/spans)
     const dtText = dt.textContent?.trim() || "";
     if (/^Address$/i.test(dtText)) {
-      // Find the associated dd element - could be sibling or in parent container
-      let current: HTMLElement | null = dt.parentElement;
-      while (current) {
-        const dd = current.querySelector<HTMLElement>("dd");
+      // Find the euiFlexGroup parent that contains both dt and dd
+      const flexGroup = dt.closest(".euiFlexGroup");
+      if (flexGroup) {
+        const dd = flexGroup.querySelector<HTMLElement>("dd");
         if (dd) {
           const addressText = dd.textContent?.trim() || "";
           if (addressText) {
-            // Extract up to the dash
+            // Extract up to the dash (e.g., "1000 N Salem St - 1000 N Salem" -> "1000 N Salem St")
             const match = addressText.match(/^([^-]+)/);
             if (match) {
               const parsedAddress = match[1].trim();
@@ -427,88 +553,11 @@ function extractAddressFromUnitSummaryPage(doc: Document): string | null {
             return addressText;
           }
         }
-        current = current.parentElement;
-      }
-      
-      // Also check siblings
-      let sibling: Node | null = dt.nextSibling;
-      while (sibling) {
-        if (sibling.nodeType === 1) {
-          const dd = (sibling as HTMLElement).querySelector<HTMLElement>("dd");
-          if (dd) {
-            const addressText = dd.textContent?.trim() || "";
-            if (addressText) {
-              const match = addressText.match(/^([^-]+)/);
-              if (match) {
-                const parsedAddress = match[1].trim();
-                console.log(`[ContentScript] Extracted address from sibling: "${parsedAddress}"`);
-                return parsedAddress;
-              }
-              return addressText;
-            }
-          }
-        }
-        sibling = sibling.nextSibling;
       }
     }
   }
   
-  // Strategy 2: Find div/element containing "Address" text, then find nearby dd
-  const addressLabel = Array.from(
-    doc.querySelectorAll<HTMLElement>(".euiText, div, span")
-  ).find((el) => {
-    const text = el.textContent?.trim() || "";
-    return /^Address$/i.test(text);
-  });
-  
-  if (addressLabel) {
-    // Look for dd in the same parent container
-    let current: HTMLElement | null = addressLabel.parentElement;
-    while (current) {
-      const dd = current.querySelector<HTMLElement>("dd");
-      if (dd) {
-        const addressText = dd.textContent?.trim() || "";
-        if (addressText) {
-          const match = addressText.match(/^([^-]+)/);
-          if (match) {
-            const parsedAddress = match[1].trim();
-            console.log(`[ContentScript] Extracted address via label search: "${parsedAddress}"`);
-            return parsedAddress;
-          }
-          return addressText;
-        }
-      }
-      current = current.parentElement;
-    }
-  }
-  
-  // Strategy 3: Search for all dd elements and find one near "Address" text
-  const allDds = Array.from(doc.querySelectorAll<HTMLElement>("dd"));
-  for (const dd of allDds) {
-    // Check if there's an "Address" label nearby (in previous siblings or parent)
-    let current: HTMLElement | null = dd.parentElement;
-    while (current) {
-      const addressLabel = current.querySelector<HTMLElement>("dt, .euiText, div, span");
-      if (addressLabel) {
-        const labelText = addressLabel.textContent?.trim() || "";
-        if (/^Address$/i.test(labelText)) {
-          const addressText = dd.textContent?.trim() || "";
-          if (addressText) {
-            const match = addressText.match(/^([^-]+)/);
-            if (match) {
-              const parsedAddress = match[1].trim();
-              console.log(`[ContentScript] Extracted address via dd search: "${parsedAddress}"`);
-              return parsedAddress;
-            }
-            return addressText;
-          }
-        }
-      }
-      current = current.parentElement;
-    }
-  }
-  
-  console.warn("Could not find address value after Address label");
+  console.warn("Could not find address on unit summary page");
   return null;
 }
 
@@ -536,6 +585,84 @@ function findUnitSummaryUrlFromMeldPage(doc: Document, baseUrl: string): string 
   }
 
   console.warn("Could not find unit summary URL on meld page");
+  return null;
+}
+
+function extractAddressFromMeldSummaryPage(doc: Document): string | null {
+  // Find the element with data-testid="meld-details-unit-or-property-address"
+  const addressContainer = doc.querySelector<HTMLElement>(
+    '[data-testid="meld-details-unit-or-property-address"]',
+  );
+
+  if (addressContainer) {
+    // Find all divs with class euiText eui-10x3kab-euiText-m
+    const addressDivs = addressContainer.querySelectorAll<HTMLElement>(
+      '.euiText.eui-10x3kab-euiText-m',
+    );
+
+    // Get the second div (index 1) - the one with the full address
+    if (addressDivs.length >= 2) {
+      const secondDiv = addressDivs[1];
+      const fullAddress = secondDiv.textContent?.trim() || "";
+      
+      if (fullAddress) {
+        // Extract the first half (before the comma)
+        const parts = fullAddress.split(',');
+        const address = parts[0]?.trim() || "";
+        
+        if (address) {
+          console.log(`[ContentScript] Extracted address from meld summary: "${address}" (from "${fullAddress}")`);
+          return address;
+        }
+      }
+    }
+  }
+
+  console.warn("Could not find address on meld summary page");
+  return null;
+}
+
+function extractIssueIdFromMeldSummaryPage(doc: Document): string | null {
+  // Look for "Issue ID" text, then find the associated value
+  // The structure should have "Issue ID" as a label and the ID as a value nearby
+  
+  // Strategy: Find all text nodes or elements containing "Issue ID"
+  const allElements = Array.from(doc.querySelectorAll<HTMLElement>("*"));
+  
+  for (const el of allElements) {
+    const text = el.textContent?.trim() || "";
+    // Look for "Issue ID" label (might be in a dt, div, or span)
+    if (/^Issue ID$/i.test(text)) {
+      // Find the associated value - could be in a sibling dd, or in the same container
+      const flexGroup = el.closest(".euiFlexGroup");
+      if (flexGroup) {
+        const dd = flexGroup.querySelector<HTMLElement>("dd");
+        if (dd) {
+          const issueId = dd.textContent?.trim() || "";
+          if (issueId) {
+            console.log(`[ContentScript] Extracted Issue ID: "${issueId}"`);
+            return issueId;
+          }
+        }
+      }
+      
+      // Also check parent containers
+      let current: HTMLElement | null = el.parentElement;
+      while (current) {
+        const dd = current.querySelector<HTMLElement>("dd");
+        if (dd) {
+          const issueId = dd.textContent?.trim() || "";
+          if (issueId) {
+            console.log(`[ContentScript] Extracted Issue ID from parent: "${issueId}"`);
+            return issueId;
+          }
+        }
+        current = current.parentElement;
+      }
+    }
+  }
+
+  console.warn("Could not find Issue ID on meld summary page");
   return null;
 }
 

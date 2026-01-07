@@ -25,6 +25,7 @@
 
   "host_permissions": [
     "https://app.propertyware.com/*",
+    "https://api.propertyware.com/*",
     "https://app.propertymeld.com/*"
   ]
 }

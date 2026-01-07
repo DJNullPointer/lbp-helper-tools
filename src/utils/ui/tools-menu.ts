@@ -14,8 +14,16 @@ const TOOLS: ToolItem[] = [
     name: "Copy Relevant Info",
     description:
       "copies relevant information from this property's PW page to the clipboard. \n\n" +
-      "Currently only works on meld create page. \n\n" +
-      "Currently does not work for a unit's first created meld.",
+      "Currently only works on meld edit and create pages. \n\n",
+    category: "property-mgmt",
+  },
+  {
+    id: "open-propertyware-page",
+    name: "Open PropertyWare Page",
+    description:
+      "From Meld, Opens the corresponding PropertyWare page in a new tab. \n\n" +
+      "meld unit pages -> ware unit detail page. \n\n" +
+      "meld summary pages -> ware work order page for that meld.",
     category: "property-mgmt",
   },
   {

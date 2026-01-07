@@ -3,6 +3,43 @@ import { parseHTML } from "linkedom";
 
 export {};
 
+// Map to store meld numbers for invoice downloads (keyed by download URL)
+const invoiceDownloadMeldNumbers = new Map<string, string>();
+
+// Set up listener to modify filenames for invoice downloads
+chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
+  // Check if this download URL has an associated meld number
+  const meldNumber = invoiceDownloadMeldNumbers.get(downloadItem.url);
+  
+  if (meldNumber && downloadItem.filename) {
+    // Extract the original filename and extension
+    const lastDot = downloadItem.filename.lastIndexOf('.');
+    if (lastDot > 0) {
+      const nameWithoutExt = downloadItem.filename.substring(0, lastDot);
+      const ext = downloadItem.filename.substring(lastDot);
+      const newFilename = `${nameWithoutExt}-${meldNumber}${ext}`;
+      console.log(`[InvoiceDownload] Renaming "${downloadItem.filename}" to "${newFilename}"`);
+      suggest({ filename: newFilename });
+      
+      // Clean up the map entry after use
+      invoiceDownloadMeldNumbers.delete(downloadItem.url);
+      return;
+    } else {
+      // No extension, just append meld number
+      const newFilename = `${downloadItem.filename}-${meldNumber}`;
+      console.log(`[InvoiceDownload] Renaming "${downloadItem.filename}" to "${newFilename}"`);
+      suggest({ filename: newFilename });
+      
+      // Clean up the map entry after use
+      invoiceDownloadMeldNumbers.delete(downloadItem.url);
+      return;
+    }
+  }
+  
+  // Not an invoice download we're tracking, use default behavior
+  suggest({ filename: downloadItem.filename });
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   // DOWNLOAD_FILES -------------------------------------------------------------
   if (message.type === "DOWNLOAD_FILES") {
@@ -34,6 +71,53 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, summary });
       } catch (err: any) {
         console.error("FETCH_PROPERTYWARE_SUMMARY_FROM_ADDRESS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
+  // GET BUILDING ID FROM ADDRESS ---------------------------------------------
+  if (message.type === "GET_BUILDING_ID_FROM_ADDRESS") {
+    (async () => {
+      try {
+        const buildingId = await getBuildingIdFromAddress(
+          message.address as string,
+        );
+        if (!buildingId) {
+          sendResponse({
+            success: false,
+            error: `Could not find building for address: ${message.address}`,
+          });
+          return;
+        }
+        sendResponse({ success: true, buildingId });
+      } catch (err: any) {
+        console.error("GET_BUILDING_ID_FROM_ADDRESS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
+  // GET PROPERTYWARE WORK ORDER URL FROM ADDRESS AND ISSUE ID ----------------
+  if (message.type === "GET_PROPERTYWARE_WORK_ORDER_URL") {
+    (async () => {
+      try {
+        const url = await getPropertyWareWorkOrderUrl(
+          message.address as string,
+          message.issueId as string,
+        );
+        if (!url) {
+          sendResponse({
+            success: false,
+            error: "Could not find PropertyWare work order for the given address and Issue ID",
+          });
+          return;
+        }
+        sendResponse({ success: true, url });
+      } catch (err: any) {
+        console.error("GET_PROPERTYWARE_WORK_ORDER_URL error", err);
         sendResponse({ success: false, error: err?.message || String(err) });
       }
     })();
@@ -288,10 +372,11 @@ async function downloadInvoiceFromPaymentPage(
     // 3. Give SPA time to render
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // 4. Ask content script to find and return the download URL
+    // 4. Ask content script to find and return the download URL and meld number
     let result: {
       success?: boolean;
       downloadUrl?: string;
+      meldNumber?: string;
       error?: string;
     } | null = null;
 
@@ -306,6 +391,7 @@ async function downloadInvoiceFromPaymentPage(
         })) as {
           success?: boolean;
           downloadUrl?: string;
+          meldNumber?: string;
           error?: string;
         };
         if (result && result.success && result.downloadUrl) {
@@ -330,12 +416,20 @@ async function downloadInvoiceFromPaymentPage(
       return null;
     }
 
-    // 5. Build full download URL and download
+    // 5. Build full download URL
     const downloadUrl = new URL(
       result.downloadUrl,
       paymentSummaryUrl,
     ).toString();
 
+    // Store meld number for this download URL so onDeterminingFilename can use it
+    if (result.meldNumber) {
+      invoiceDownloadMeldNumbers.set(downloadUrl, result.meldNumber);
+      console.log(`[InvoiceDownload] Stored meld number "${result.meldNumber}" for download: ${downloadUrl}`);
+    }
+
+    // Start download without specifying filename - let Chrome determine it,
+    // then onDeterminingFilename will modify it to append the meld number
     console.log(`[InvoiceDownload] Downloading invoice from: ${downloadUrl}`);
     await chrome.downloads.download({
       url: downloadUrl,
@@ -633,6 +727,9 @@ async function getBuildingIdFromAddress(address: string): Promise<number | null>
     credentials: "include",
     headers: {
       Accept: "application/json",
+      "x-propertyware-client-id": "fabd8c1d-469c-457f-9c6c-4e953ba5ae3a",
+      "x-propertyware-client-secret": "4b17a00f-b509-4545-bb47-58495424ed94",
+      "x-propertyware-system-id": "251330565",
     },
   });
 
@@ -654,6 +751,80 @@ async function getBuildingIdFromAddress(address: string): Promise<number | null>
   const buildingId = data[0].id;
   console.log(`[Propertyware] Using building ID: ${buildingId}`);
   return buildingId;
+}
+
+async function getPropertyWareWorkOrderUrl(
+  address: string,
+  issueId: string,
+): Promise<string | null> {
+  console.log(
+    `[Propertyware] Finding work order for address: "${address}", Issue ID: "${issueId}"`,
+  );
+
+  // 1) Get building ID from address
+  const buildingId = await getBuildingIdFromAddress(address);
+  if (!buildingId) {
+    throw new Error(`Could not find building for address: ${address}`);
+  }
+  console.log(`[Propertyware] Found building ID: ${buildingId}`);
+
+  // 2) Call PropertyWare API to get work orders for this building
+  const apiUrl = new URL("https://api.propertyware.com/pw/api/rest/v1/workorders");
+  apiUrl.searchParams.set("buildingID", buildingId.toString());
+  apiUrl.searchParams.set("orderby", "createddate desc");
+  apiUrl.searchParams.set("limit", "200");
+
+  console.log(`[Propertyware] API URL: ${apiUrl.toString()}`);
+
+  const resp = await fetch(apiUrl.toString(), {
+    method: "GET",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "x-propertyware-client-id": "fabd8c1d-469c-457f-9c6c-4e953ba5ae3a",
+      "x-propertyware-client-secret": "4b17a00f-b509-4545-bb47-58495424ed94",
+      "x-propertyware-system-id": "251330565",
+    },
+  });
+
+  if (!resp.ok) {
+    throw new Error(
+      `Propertyware API request failed: ${resp.status} ${resp.statusText}`,
+    );
+  }
+
+  const workOrders = (await resp.json()) as Array<{
+    id: number;
+    number: number;
+  }>;
+  console.log(`[Propertyware] API returned ${workOrders.length} work order(s)`);
+
+  // 3) Find the work order with matching Issue ID (stored in the "number" field)
+  const issueIdNum = parseInt(issueId, 10);
+  if (isNaN(issueIdNum)) {
+    throw new Error(`Invalid Issue ID format: ${issueId}`);
+  }
+
+  const matchingWorkOrder = workOrders.find(
+    (wo) => wo.number === issueIdNum,
+  );
+
+  if (!matchingWorkOrder) {
+    console.warn(
+      `[Propertyware] No work order found with Issue ID (number) ${issueIdNum}`,
+    );
+    return null;
+  }
+
+  console.log(
+    `[Propertyware] Found matching work order: ID ${matchingWorkOrder.id}, Number ${matchingWorkOrder.number}`,
+  );
+
+  // 4) Build the work order detail URL
+  const workOrderUrl = `https://app.propertyware.com/pw/maintenance/work_order_detail.do?entityID=${matchingWorkOrder.id}`;
+  console.log(`[Propertyware] Work order URL: ${workOrderUrl}`);
+
+  return workOrderUrl;
 }
 
 function buildSummaryFromPwPages(unitHtml: string): string {
