@@ -4,7 +4,7 @@ import { waitForTabComplete } from "../utils";
 
 export async function extractAddressFromUnitSummaryUrl(
   unitSummaryUrl: string,
-): Promise<string | null> {
+): Promise<{ unitAddress: string | null; buildingAddress: string | null }> {
   // 1. Open a background tab with the unit summary URL
   const tab = await new Promise<chrome.tabs.Tab>((resolve, reject) => {
     chrome.tabs.create({ url: unitSummaryUrl, active: false }, (t) => {
@@ -29,11 +29,12 @@ export async function extractAddressFromUnitSummaryUrl(
     // 3. Give SPA time to render
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
-    // 4. Ask the content script in THAT tab to extract the address
+    // 4. Ask the content script in THAT tab to extract both addresses
     // Retry with exponential backoff until content script responds or timeout
     let result: {
       success?: boolean;
-      address?: string;
+      unitAddress?: string;
+      buildingAddress?: string;
       error?: string;
     } | null = null;
 
@@ -47,10 +48,11 @@ export async function extractAddressFromUnitSummaryUrl(
           type: "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY",
         })) as {
           success?: boolean;
-          address?: string;
+          unitAddress?: string;
+          buildingAddress?: string;
           error?: string;
         };
-        if (result && result.success && result.address) {
+        if (result && result.success) {
           break;
         }
       } catch (err: any) {
@@ -66,12 +68,15 @@ export async function extractAddressFromUnitSummaryUrl(
       }
     }
 
-    if (!result || !result.success || !result.address) {
-      console.warn("Failed to extract address from unit summary tab", result);
-      return null;
+    if (!result || !result.success) {
+      console.warn("Failed to extract addresses from unit summary tab", result);
+      return { unitAddress: null, buildingAddress: null };
     }
 
-    return result.address;
+    return {
+      unitAddress: result.unitAddress || null,
+      buildingAddress: result.buildingAddress || null,
+    };
   } finally {
     // 5. Clean up the background tab
     chrome.tabs.remove(tabId);

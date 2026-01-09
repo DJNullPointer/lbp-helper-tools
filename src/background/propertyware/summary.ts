@@ -1,7 +1,7 @@
 // Propertyware summary building functions
 
 import { parseHTML } from "linkedom";
-import { getBuildingIdFromAddress } from "./api";
+import { getBuildingIdFromAddress, getUnitIdFromAddress } from "./api";
 import { fetchPwHtml } from "./fetch";
 import {
   extractAddress,
@@ -12,22 +12,46 @@ import {
 } from "./extractors";
 
 export async function fetchPropertywareSummaryFromAddress(
-  address: string,
+  unitAddress: string,
+  buildingAddress?: string,
 ): Promise<string> {
-  console.log(`[Propertyware] Fetching unit detail from address: "${address}"`);
-
-  // 1) Call Propertyware API to get building ID
   console.log(
-    `[Propertyware] Step 1: Calling API to find building by address...`,
+    `[Propertyware] Fetching unit detail from unit address: "${unitAddress}"${buildingAddress ? ` (with building address: "${buildingAddress}")` : ""}`,
   );
-  const buildingId = await getBuildingIdFromAddress(address);
-  if (!buildingId) {
-    throw new Error(`Could not find building for address: ${address}`);
-  }
-  console.log(`[Propertyware] Found building ID: ${buildingId}`);
 
-  // 2) Build unit detail URL directly using building ID
-  const unitUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${buildingId}`;
+  // 1) Try to get unit ID directly (with fallback to building address if needed)
+  console.log(
+    `[Propertyware] Step 1: Calling API to find unit by address...`,
+  );
+  let entityId: number | null = null;
+
+  // First try with unit address only
+  entityId = await getUnitIdFromAddress(unitAddress, buildingAddress);
+
+  if (!entityId) {
+    // Fallback: try with building ID (for non-unit properties)
+    console.log(
+      `[Propertyware] No unit found, trying building ID as fallback...`,
+    );
+    const buildingId = await getBuildingIdFromAddress(
+      buildingAddress || unitAddress,
+    );
+    if (buildingId) {
+      entityId = buildingId;
+      console.log(`[Propertyware] Using building ID as fallback: ${entityId}`);
+    }
+  }
+
+  if (!entityId) {
+    throw new Error(
+      `Could not find unit or building for address: ${unitAddress}${buildingAddress ? ` or ${buildingAddress}` : ""}`,
+    );
+  }
+
+  console.log(`[Propertyware] Found entity ID: ${entityId}`);
+
+  // 2) Build unit detail URL using entity ID
+  const unitUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${entityId}`;
   console.log(`[Propertyware] Unit detail URL: ${unitUrl}`);
 
   // 3) Fetch unit detail page

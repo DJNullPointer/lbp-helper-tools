@@ -3,7 +3,14 @@
 
 import { waitForSPAReady, copyTextToClipboard } from "./utils";
 import { handleCopyRelevantInfo, handleDownloadMeldInvoices } from "./handlers";
-import { extractAddressFromUnitSummaryPage, findUnitSummaryUrlFromMeldPage, extractAddressFromMeldSummaryPage, extractIssueIdFromMeldSummaryPage } from "./extractors";
+import {
+  extractUnitAddressFromUnitSummaryPage,
+  extractBuildingAddressFromUnitSummaryPage,
+  findUnitSummaryUrlFromMeldPage,
+  extractUnitAddressFromMeldSummaryPage,
+  extractBuildingAddressFromMeldSummaryPage,
+  extractIssueIdFromMeldSummaryPage,
+} from "./extractors";
 
 export {};
 
@@ -151,24 +158,31 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           });
         }
 
-        // Wait for SPA to render - look for Address element
+        // Wait for SPA to render - look for Address element and header subtitle
         await waitForSPAReady(
           [
             'dt',
             '[data-testid*="address"]',
+            '[data-testid="header-subtitle"]',
             '.euiFlexGroup',
             'body',
           ],
           5000,
         );
 
-        const address = extractAddressFromUnitSummaryPage(document);
-        if (address) {
-          sendResponse({ success: true, address });
+        const unitAddress = extractUnitAddressFromUnitSummaryPage(document);
+        const buildingAddress = extractBuildingAddressFromUnitSummaryPage(document);
+        console.log(`[ContentScript] Extracted - unitAddress: "${unitAddress}", buildingAddress: "${buildingAddress}"`);
+        if (unitAddress) {
+          sendResponse({
+            success: true,
+            unitAddress,
+            buildingAddress: buildingAddress || undefined,
+          });
         } else {
           sendResponse({
             success: false,
-            error: "Could not find Address on unit summary page",
+            error: "Could not find unit address on unit summary page",
           });
         }
       } catch (err: any) {
@@ -251,36 +265,39 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         let propertyWareUrl: string;
 
         if (isUnitSummary) {
-          // Extract address and get building ID, then build unit detail URL
+          // Extract addresses and get unit ID, then build unit detail URL
           await waitForSPAReady(['dt', '.euiFlexGroup', 'body'], 5000);
-          const address = extractAddressFromUnitSummaryPage(document);
+          const unitAddress = extractUnitAddressFromUnitSummaryPage(document);
+          const buildingAddress = extractBuildingAddressFromUnitSummaryPage(document);
           
-          if (!address) {
+          if (!unitAddress) {
             sendResponse({
               success: false,
-              error: "Could not extract address from unit summary page",
+              error: "Could not extract unit address from unit summary page",
             });
             return;
           }
 
+          // Use the new API that handles fallback to building address
           const resp = (await chrome.runtime.sendMessage({
-            type: "GET_BUILDING_ID_FROM_ADDRESS",
-            address,
+            type: "GET_UNIT_ID_FROM_ADDRESS",
+            unitAddress,
+            buildingAddress: buildingAddress || undefined,
           })) as {
             success: boolean;
-            buildingId?: number;
+            unitId?: number;
             error?: string;
           };
 
-          if (!resp || !resp.success || !resp.buildingId) {
+          if (!resp || !resp.success || !resp.unitId) {
             sendResponse({
               success: false,
-              error: resp?.error || "Could not find building ID for address",
+              error: resp?.error || "Could not find unit ID for address",
             });
             return;
           }
 
-          propertyWareUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${resp.buildingId}`;
+          propertyWareUrl = `https://app.propertyware.com/pw/properties/unit_detail.do?entityID=${resp.unitId}`;
         } else {
           // Meld summary page: extract address and issue ID, then get work order
           await waitForSPAReady(
@@ -292,13 +309,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             5000,
           );
 
-          const address = extractAddressFromMeldSummaryPage(document);
+          const unitAddress = extractUnitAddressFromMeldSummaryPage(document);
+          const buildingAddress = extractBuildingAddressFromMeldSummaryPage(document);
           const issueId = extractIssueIdFromMeldSummaryPage(document);
 
-          if (!address) {
+          if (!unitAddress) {
             sendResponse({
               success: false,
-              error: "Could not extract address from meld summary page",
+              error: "Could not extract unit address from meld summary page",
             });
             return;
           }
@@ -313,7 +331,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
           const resp = (await chrome.runtime.sendMessage({
             type: "GET_PROPERTYWARE_WORK_ORDER_URL",
-            address,
+            address: unitAddress,
+            buildingAddress: buildingAddress || undefined,
             issueId,
           })) as {
             success: boolean;

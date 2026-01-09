@@ -3,7 +3,7 @@
 
 import { invoiceDownloadMeldNumbers, handleDownloads, downloadInvoicesFromPaymentPages } from "./downloads";
 import { fetchPropertyWarePage } from "./propertyware/fetch";
-import { getBuildingIdFromAddress, getPropertyWareWorkOrderUrl } from "./propertyware/api";
+import { getBuildingIdFromAddress, getPropertyWareWorkOrderUrl, getUnitIdFromAddress } from "./propertyware/api";
 import { extractAddressFromUnitSummaryUrl, getUnitSummaryUrlFromMeld } from "./propertyware/scraping";
 import { fetchPropertywareSummaryFromAddress } from "./propertyware/summary";
 
@@ -73,7 +73,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     (async () => {
       try {
         const summary = await fetchPropertywareSummaryFromAddress(
-          message.address as string,
+          message.unitAddress as string,
+          message.buildingAddress as string | undefined,
         );
         sendResponse({ success: true, summary });
       } catch (err: any) {
@@ -107,6 +108,30 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true; // async
   }
 
+  // GET UNIT ID FROM ADDRESS (with building address fallback) -----------------
+  if (message.type === "GET_UNIT_ID_FROM_ADDRESS") {
+    (async () => {
+      try {
+        const unitId = await getUnitIdFromAddress(
+          message.unitAddress as string,
+          message.buildingAddress as string | undefined,
+        );
+        if (!unitId) {
+          sendResponse({
+            success: false,
+            error: `Could not find unit for address: ${message.unitAddress}`,
+          });
+          return;
+        }
+        sendResponse({ success: true, unitId });
+      } catch (err: any) {
+        console.error("GET_UNIT_ID_FROM_ADDRESS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
   // GET PROPERTYWARE WORK ORDER URL FROM ADDRESS AND ISSUE ID ----------------
   if (message.type === "GET_PROPERTYWARE_WORK_ORDER_URL") {
     (async () => {
@@ -114,6 +139,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const url = await getPropertyWareWorkOrderUrl(
           message.address as string,
           message.issueId as string,
+          message.buildingAddress as string | undefined,
         );
         if (!url) {
           sendResponse({
@@ -136,17 +162,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL") {
     (async () => {
       try {
-        const address = await extractAddressFromUnitSummaryUrl(
-          message.unitSummaryUrl as string,
-        );
-        if (!address) {
+        const { unitAddress, buildingAddress } =
+          await extractAddressFromUnitSummaryUrl(
+            message.unitSummaryUrl as string,
+          );
+        if (!unitAddress) {
           sendResponse({
             success: false,
-            error: "Could not extract address from unit summary page.",
+            error: "Could not extract unit address from unit summary page.",
           });
           return;
         }
-        sendResponse({ success: true, address });
+        sendResponse({
+          success: true,
+          unitAddress,
+          buildingAddress: buildingAddress || undefined,
+        });
       } catch (err: any) {
         console.error("EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL error", err);
         sendResponse({ success: false, error: err?.message || String(err) });

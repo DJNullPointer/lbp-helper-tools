@@ -1,8 +1,14 @@
 // Main handler functions for content script
 
 import { waitForSPAReady } from "./utils";
-import { buildUnitSummaryUrlFromNewMeld, buildMeldSummaryUrlFromEditMeld } from "./url-builders";
-import { extractAddressFromUnitSummaryPage } from "./extractors";
+import {
+  buildUnitSummaryUrlFromNewMeld,
+  buildMeldSummaryUrlFromEditMeld,
+} from "./url-builders";
+import {
+  extractUnitAddressFromUnitSummaryPage,
+  extractBuildingAddressFromUnitSummaryPage,
+} from "./extractors";
 
 export async function handleCopyRelevantInfo(): Promise<string> {
   // Always use the current page URL (fresh, not cached)
@@ -25,26 +31,31 @@ export async function handleCopyRelevantInfo(): Promise<string> {
   }
 
   let unitSummaryUrl: string;
-  let address: string | null = null;
+  let unitAddress: string | null = null;
+  let buildingAddress: string | null = null;
 
   if (isUnitSummary) {
     // We're already on the unit summary page
     unitSummaryUrl = currentUrl;
-    // Extract address from current page
-    address = extractAddressFromUnitSummaryPage(document);
-    if (!address) {
-      // Wait for SPA to render if address not found immediately
+    // Extract addresses from current page
+    unitAddress = extractUnitAddressFromUnitSummaryPage(document);
+    buildingAddress = extractBuildingAddressFromUnitSummaryPage(document);
+    if (!unitAddress || !buildingAddress) {
+      // Wait for SPA to render if addresses not found immediately
       await waitForSPAReady(
         [
           'dt',
           '[data-testid*="address"]',
+          '[data-testid="header-subtitle"]',
           '.euiFlexGroup',
           'body',
         ],
         5000,
       );
-      address = extractAddressFromUnitSummaryPage(document);
+      unitAddress = extractUnitAddressFromUnitSummaryPage(document);
+      buildingAddress = extractBuildingAddressFromUnitSummaryPage(document);
     }
+    console.log(`[ContentScript] Extracted - unitAddress: "${unitAddress}", buildingAddress: "${buildingAddress}"`);
   } else if (isNewMeld) {
     // We're on new-meld → derive unit summary URL
     unitSummaryUrl = buildUnitSummaryUrlFromNewMeld(url);
@@ -76,37 +87,40 @@ export async function handleCopyRelevantInfo(): Promise<string> {
     throw new Error("Invalid page type");
   }
 
-  // If we don't have the address yet (new meld or edit meld), get it from unit summary
-  if (!address) {
-    // Need to open unit summary in background tab and extract address
+  // If we don't have the addresses yet (new meld or edit meld), get them from unit summary
+  if (!unitAddress) {
+    // Need to open unit summary in background tab and extract addresses
     const resp = (await chrome.runtime.sendMessage({
       type: "EXTRACT_ADDRESS_FROM_UNIT_SUMMARY_URL",
       unitSummaryUrl,
     })) as {
       success: boolean;
-      address?: string;
+      unitAddress?: string;
+      buildingAddress?: string;
       error?: string;
     };
 
-    if (!resp || !resp.success || !resp.address) {
+    if (!resp || !resp.success || !resp.unitAddress) {
       throw new Error(
         resp?.error ||
-          "Could not extract address from unit summary page.",
+          "Could not extract unit address from unit summary page.",
       );
     }
-    address = resp.address;
+    unitAddress = resp.unitAddress;
+    buildingAddress = resp.buildingAddress || null;
   }
 
-  if (!address) {
+  if (!unitAddress) {
     throw new Error(
-      "Could not find address on unit summary page.",
+      "Could not find unit address on unit summary page.",
     );
   }
 
-  // Use address to fetch Propertyware summary via API
+  // Use addresses to fetch Propertyware summary via API
   const response = (await chrome.runtime.sendMessage({
     type: "FETCH_PROPERTYWARE_SUMMARY_FROM_ADDRESS",
-    address,
+    unitAddress,
+    buildingAddress: buildingAddress || undefined,
   })) as {
     success: boolean;
     summary?: string;

@@ -1,6 +1,6 @@
 // Data extraction functions for content script
 
-export function extractAddressFromUnitSummaryPage(doc: Document): string | null {
+export function extractUnitAddressFromUnitSummaryPage(doc: Document): string | null {
   // Find the dt element containing "Address" text, then find the dd in the same euiFlexGroup
   const allDts = Array.from(doc.querySelectorAll<HTMLElement>("dt"));
   
@@ -18,11 +18,11 @@ export function extractAddressFromUnitSummaryPage(doc: Document): string | null 
             const match = addressText.match(/^([^-]+)/);
             if (match) {
               const parsedAddress = match[1].trim();
-              console.log(`[ContentScript] Extracted address: "${parsedAddress}" from "${addressText}"`);
+              console.log(`[ContentScript] Extracted unit address: "${parsedAddress}" from "${addressText}"`);
               return parsedAddress;
             }
             // If no dash, return the whole text
-            console.log(`[ContentScript] Extracted address (no dash): "${addressText}"`);
+            console.log(`[ContentScript] Extracted unit address (no dash): "${addressText}"`);
             return addressText;
           }
         }
@@ -30,7 +30,7 @@ export function extractAddressFromUnitSummaryPage(doc: Document): string | null 
     }
   }
   
-  console.warn("Could not find address on unit summary page");
+  console.warn("Could not find unit address on unit summary page");
   return null;
 }
 
@@ -61,7 +61,7 @@ export function findUnitSummaryUrlFromMeldPage(doc: Document, baseUrl: string): 
   return null;
 }
 
-export function extractAddressFromMeldSummaryPage(doc: Document): string | null {
+export function extractUnitAddressFromMeldSummaryPage(doc: Document): string | null {
   // Find the element with data-testid="meld-details-unit-or-property-address"
   const addressContainer = doc.querySelector<HTMLElement>(
     '[data-testid="meld-details-unit-or-property-address"]',
@@ -136,5 +136,54 @@ export function extractIssueIdFromMeldSummaryPage(doc: Document): string | null 
   }
 
   console.warn("Could not find Issue ID on meld summary page");
+  return null;
+}
+
+export function extractBuildingAddressFromMeldSummaryPage(doc: Document): string | null {
+  // Find the element with data-testid="meld-details-unit-or-property-address"
+  const addressContainer = doc.querySelector<HTMLElement>(
+    '[data-testid="meld-details-unit-or-property-address"]',
+  );
+
+  if (addressContainer) {
+    // Find the first div with class euiText eui-10x3kab-euiText-m (the building address)
+    const addressDivs = addressContainer.querySelectorAll<HTMLElement>(
+      '.euiText.eui-10x3kab-euiText-m',
+    );
+
+    // Get the first div (index 0) - the building address
+    if (addressDivs.length >= 1) {
+      const firstDiv = addressDivs[0];
+      const buildingAddress = firstDiv.textContent?.trim() || "";
+      
+      if (buildingAddress) {
+        console.log(`[ContentScript] Extracted building address from meld summary: "${buildingAddress}"`);
+        return buildingAddress;
+      }
+    }
+  }
+
+  console.warn("Could not find building address on meld summary page");
+  return null;
+}
+
+export function extractBuildingAddressFromUnitSummaryPage(doc: Document): string | null {
+  // Find the header subtitle element with the building address
+  // Structure: <div class="euiText eui-fvzp9a-euiText-s" data-testid="header-subtitle">
+  //   <span>1701 Smith Level</span>
+  // </div>
+  const headerSubtitle = doc.querySelector<HTMLElement>(
+    '[data-testid="header-subtitle"]',
+  );
+
+  if (headerSubtitle) {
+    const buildingAddress = headerSubtitle.textContent?.trim() || "";
+    if (buildingAddress) {
+      console.log(`[ContentScript] Extracted building address from unit summary: "${buildingAddress}"`);
+      return buildingAddress;
+    }
+  }
+
+  console.warn("Could not find building address on unit summary page");
   return null;
 }
