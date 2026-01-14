@@ -13,6 +13,16 @@ dist
 dist-ssr
 *.local
 
+# Build artifacts and zip files
+*.zip
+lbp-helper-*.zip
+
+# Private keys and certificates
+*.pem
+*.key
+*.crt
+*.cert
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

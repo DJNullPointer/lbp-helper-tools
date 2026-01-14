@@ -1,5 +1,27 @@
 // Propertyware API calls
 
+import { getPropertywareApiKeys } from "../../utils/api-keys";
+
+/**
+ * Get API headers with credentials from storage
+ * @throws Error if API keys are not configured
+ */
+async function getApiHeaders(): Promise<Record<string, string>> {
+  const keys = await getPropertywareApiKeys();
+  if (!keys) {
+    throw new Error(
+      "Propertyware API keys are not configured. Please go to the extension options page to configure them.",
+    );
+  }
+
+  return {
+    Accept: "application/json",
+    "x-propertyware-client-id": keys.clientId,
+    "x-propertyware-client-secret": keys.clientSecret,
+    "x-propertyware-system-id": keys.systemId,
+  };
+}
+
 async function searchBuildingsByAddress(
   address: string,
 ): Promise<Array<{ id: number }>> {
@@ -10,15 +32,12 @@ async function searchBuildingsByAddress(
 
   console.log(`[Propertyware] Searching buildings API: ${apiUrl.toString()}`);
 
+  const headers = await getApiHeaders();
+
   const resp = await fetch(apiUrl.toString(), {
     method: "GET",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "x-propertyware-client-id": "fabd8c1d-469c-457f-9c6c-4e953ba5ae3a",
-      "x-propertyware-client-secret": "4b17a00f-b509-4545-bb47-58495424ed94",
-      "x-propertyware-system-id": "251330565",
-    },
+    headers,
   });
 
   if (!resp.ok) {
@@ -42,15 +61,12 @@ async function searchUnitsByBuildingId(
 
   console.log(`[Propertyware] Searching units API: ${apiUrl.toString()}`);
 
+  const headers = await getApiHeaders();
+
   const resp = await fetch(apiUrl.toString(), {
     method: "GET",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "x-propertyware-client-id": "fabd8c1d-469c-457f-9c6c-4e953ba5ae3a",
-      "x-propertyware-client-secret": "4b17a00f-b509-4545-bb47-58495424ed94",
-      "x-propertyware-system-id": "251330565",
-    },
+    headers,
   });
 
   if (!resp.ok) {
@@ -238,15 +254,12 @@ export async function getPropertyWareWorkOrderUrl(
 
   console.log(`[Propertyware] API URL: ${apiUrl.toString()}`);
 
+  const headers = await getApiHeaders();
+
   const resp = await fetch(apiUrl.toString(), {
     method: "GET",
     credentials: "include",
-    headers: {
-      Accept: "application/json",
-      "x-propertyware-client-id": "fabd8c1d-469c-457f-9c6c-4e953ba5ae3a",
-      "x-propertyware-client-secret": "4b17a00f-b509-4545-bb47-58495424ed94",
-      "x-propertyware-system-id": "251330565",
-    },
+    headers,
   });
 
   if (!resp.ok) {

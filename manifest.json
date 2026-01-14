@@ -8,6 +8,8 @@
     "default_popup": "index.html"
   },
 
+  "options_page": "options.html",
+
   "background": {
     "service_worker": "src/background/index.ts",
     "type": "module"
@@ -21,7 +23,7 @@
     }
   ],
 
-  "permissions": ["cookies", "downloads", "tabs", "scripting", "clipboardRead", "clipboardWrite"],
+  "permissions": ["cookies", "downloads", "tabs", "scripting", "clipboardRead", "clipboardWrite", "storage"],
 
   "host_permissions": [
     "https://app.propertyware.com/*",

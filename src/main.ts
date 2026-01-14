@@ -30,6 +30,10 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         </span>
       </div>
 
+      <div class="settings-link-row">
+        <a href="#" id="settings-link" class="settings-link">⚙️ Settings</a>
+      </div>
+
 
 
     </header>
@@ -45,4 +49,13 @@ renderStatuses();
 const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
 if (toolsContainer) {
   createToolsMenu({ container: toolsContainer });
+}
+
+// Add settings link handler
+const settingsLink = document.querySelector<HTMLAnchorElement>("#settings-link");
+if (settingsLink) {
+  settingsLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    chrome.runtime.openOptionsPage();
+  });
 }
