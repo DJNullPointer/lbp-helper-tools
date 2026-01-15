@@ -79,27 +79,6 @@ body {
 .status-indicator--ok { color: #047857; }
 .status-indicator--error { color: #9b1c1c; }
 
-/* ===== Settings Link ===== */
-
-.settings-link-row {
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 0;
-  margin-top: 4px;
-}
-
-.settings-link {
-  font-size: 0.75rem;
-  color: #6b7280;
-  text-decoration: none;
-  cursor: pointer;
-  transition: color 0.15s ease;
-}
-
-.settings-link:hover {
-  color: #374151;
-}
-
 /* ===== Tools Section ===== */
 
 .tools {

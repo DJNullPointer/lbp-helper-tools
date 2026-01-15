@@ -1,50 +1,46 @@
-// Propertyware API calls
+// Propertyware API calls via Netlify proxy
 
-import { getPropertywareApiKeys } from "../../utils/api-keys";
+import { PROXY_BASE_URL } from "../../utils/proxy-config";
 
 /**
- * Get API headers with credentials from storage
- * @throws Error if API keys are not configured
+ * Make a proxied API request to Propertyware
  */
-async function getApiHeaders(): Promise<Record<string, string>> {
-  const keys = await getPropertywareApiKeys();
-  if (!keys) {
+async function proxyApiRequest(
+  endpoint: string,
+  params?: Record<string, string>,
+): Promise<Response> {
+  const proxyUrl = PROXY_BASE_URL;
+
+  console.log(`[Propertyware] Proxying request to: ${endpoint}`, params);
+
+  const resp = await fetch(proxyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      endpoint,
+      method: "GET",
+      params,
+    }),
+  });
+
+  if (!resp.ok) {
+    const errorText = await resp.text();
     throw new Error(
-      "Propertyware API keys are not configured. Please go to the extension options page to configure them.",
+      `Propertyware API proxy request failed: ${resp.status} ${resp.statusText} - ${errorText}`,
     );
   }
 
-  return {
-    Accept: "application/json",
-    "x-propertyware-client-id": keys.clientId,
-    "x-propertyware-client-secret": keys.clientSecret,
-    "x-propertyware-system-id": keys.systemId,
-  };
+  return resp;
 }
 
 async function searchBuildingsByAddress(
   address: string,
 ): Promise<Array<{ id: number }>> {
-  const apiUrl = new URL(
-    "https://api.propertyware.com/pw/api/rest/v1/buildings",
-  );
-  apiUrl.searchParams.set("address", address);
+  console.log(`[Propertyware] Searching buildings API for address: "${address}"`);
 
-  console.log(`[Propertyware] Searching buildings API: ${apiUrl.toString()}`);
-
-  const headers = await getApiHeaders();
-
-  const resp = await fetch(apiUrl.toString(), {
-    method: "GET",
-    credentials: "include",
-    headers,
-  });
-
-  if (!resp.ok) {
-    throw new Error(
-      `Propertyware API request failed: ${resp.status} ${resp.statusText}`,
-    );
-  }
+  const resp = await proxyApiRequest("/buildings", { address });
 
   const data = (await resp.json()) as Array<{ id: number }>;
   console.log(`[Propertyware] Buildings API returned ${data.length} result(s) for address: "${address}"`);
@@ -54,26 +50,11 @@ async function searchBuildingsByAddress(
 async function searchUnitsByBuildingId(
   buildingId: number,
 ): Promise<Array<{ id: number; address: { address: string } }>> {
-  const apiUrl = new URL(
-    "https://api.propertyware.com/pw/api/rest/v1/units",
-  );
-  apiUrl.searchParams.set("buildingID", buildingId.toString());
+  console.log(`[Propertyware] Searching units API for building ID: ${buildingId}`);
 
-  console.log(`[Propertyware] Searching units API: ${apiUrl.toString()}`);
-
-  const headers = await getApiHeaders();
-
-  const resp = await fetch(apiUrl.toString(), {
-    method: "GET",
-    credentials: "include",
-    headers,
+  const resp = await proxyApiRequest("/units", {
+    buildingID: buildingId.toString(),
   });
-
-  if (!resp.ok) {
-    throw new Error(
-      `Propertyware API request failed: ${resp.status} ${resp.statusText}`,
-    );
-  }
 
   const data = (await resp.json()) as Array<{
     id: number;
@@ -245,28 +226,13 @@ export async function getPropertyWareWorkOrderUrl(
   console.log(`[Propertyware] Found building ID: ${buildingId}`);
 
   // 2) Call PropertyWare API to get work orders for this building
-  const apiUrl = new URL(
-    "https://api.propertyware.com/pw/api/rest/v1/workorders",
-  );
-  apiUrl.searchParams.set("buildingID", buildingId.toString());
-  apiUrl.searchParams.set("orderby", "createddate desc");
-  apiUrl.searchParams.set("limit", "200");
+  console.log(`[Propertyware] Fetching work orders for building ID: ${buildingId}`);
 
-  console.log(`[Propertyware] API URL: ${apiUrl.toString()}`);
-
-  const headers = await getApiHeaders();
-
-  const resp = await fetch(apiUrl.toString(), {
-    method: "GET",
-    credentials: "include",
-    headers,
+  const resp = await proxyApiRequest("/workorders", {
+    buildingID: buildingId.toString(),
+    orderby: "createddate desc",
+    limit: "200",
   });
-
-  if (!resp.ok) {
-    throw new Error(
-      `Propertyware API request failed: ${resp.status} ${resp.statusText}`,
-    );
-  }
 
   const workOrders = (await resp.json()) as Array<{
     id: number;
