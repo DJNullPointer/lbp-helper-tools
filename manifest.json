@@ -4,7 +4,7 @@
   "description": "A set of internal helper tools for LBP workflow",
   "version": "1.0.2",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApjm20kHqdzWIBEteCbkb97xwkazKtBwtS+Rgx5WEz1KbIXfeclNOc+3FqcnxgqKs3NWoQl6YGlK53KklU/R3ijbkRQtzDkU2ynrIwvZqojnP1iwpIEki7vQrS4Qn5oxR3LNLTDBHwY5blM9y3IJ2gJLZLWq/A6a8hu/SEyJrHdV4u9cvwq+p+vGGSt18pi8tlniO8rp7w37GFodYhkrHyWv98GRn9B8pHf1uGogIn/tmyN6Luup+eVM2uUonae74i8VdT6kfDk09MvO73XbPxY6+Oh2JTFp8aNDXKll/Qk2+jlfmfCzgiEIpE3l1EG3t4Cvkr0guAtuUbAUR+s8+QwIDAQAB",
-  "update_url": "https://github.com/DJNullPointer/lbp-helper-tools/releases/download/v1.0.2/update.xml",
+  "update_url": "https://djnullpointer.github.io/lbp-helper-tools/update.xml",
 
   "action": {
     "default_popup": "index.html"
