@@ -84,6 +84,8 @@ const MELD_CATEGORY_TO_WARE_CATEGORY: Record<string, string> = {
   'Garbage Disposal': 'Plumbing',
   'General': 'General Maintenance',
   'Heating / AC': 'HVAC',
+  'Hvac': 'HVAC',
+  'HVAC': 'HVAC',
   'Interior': 'General Maintenance',
   'Landscaping': 'Landscaping',
   'Locks': 'Locks/Keys',
@@ -124,10 +126,12 @@ const DESCRIPTION_KEYWORD_TO_CATEGORY: Record<string, string> = {
   'septic': 'Septic',
   'trash': 'Trash Removal',
   'Trash': 'Trash Removal',
+  'gutter': 'Gutter Cleaning',
+  'Gutter': 'Gutter Cleaning',
 };
 
 /**
- * Make a proxied API request to PropertyWare
+ * Make a proxied API request to PropertyWare with retry logic for "fetch failed" errors
  */
 async function proxyApiRequest(
   endpoint: string,
@@ -135,27 +139,66 @@ async function proxyApiRequest(
   params?: Record<string, string>,
   body?: any
 ): Promise<Response> {
-  const resp = await fetch(PROXY_BASE_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      endpoint,
-      method,
-      params,
-      body,
-    }),
-  });
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await fetch(PROXY_BASE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          endpoint,
+          method,
+          params,
+          body,
+        }),
+      });
 
-  if (!resp.ok) {
-    const errorText = await resp.text();
-    throw new Error(
-      `Propertyware API request failed: ${resp.status} ${resp.statusText} - ${errorText}`
-    );
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        const errorMessage = `Propertyware API request failed: ${resp.status} ${resp.statusText} - ${errorText}`;
+        
+        // Check if this is a "fetch failed" error that we should retry
+        if (errorText.includes('fetch failed') && attempt < maxRetries) {
+          const delayMs = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+          console.log(
+            `[WorkOrderMonitor] API request failed with "fetch failed" (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delayMs}ms...`
+          );
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          lastError = new Error(errorMessage);
+          continue; // Retry
+        }
+        
+        // Not a retryable error or max retries reached
+        throw new Error(errorMessage);
+      }
+
+      // Success - return the response
+      return resp;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      
+      // Check if this is a "fetch failed" error that we should retry
+      if (errorMessage.includes('fetch failed') && attempt < maxRetries) {
+        const delayMs = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
+        console.log(
+          `[WorkOrderMonitor] API request failed with "fetch failed" (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delayMs}ms...`
+        );
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        lastError = error instanceof Error ? error : new Error(errorMessage);
+        continue; // Retry
+      }
+      
+      // Not a retryable error or max retries reached - throw immediately
+      throw error;
+    }
   }
-
-  return resp;
+  
+  // Should never reach here, but TypeScript needs this
+  throw lastError || new Error('API request failed after all retries');
 }
 
 /**
@@ -241,6 +284,10 @@ function normalizeCategory(category: string): string {
     // Handle special case: "EXTERNAL" -> "Exterior" (before normal uppercase conversion)
     if (category === 'EXTERNAL') {
       return 'Exterior Maintenance';
+    }
+    // Handle special case: "HVAC" -> "Heating / AC" (to match mapping key)
+    if (category === 'HVAC') {
+      return 'Heating / AC';
     }
     // All uppercase, no underscores - just capitalize first letter
     return category.charAt(0).toUpperCase() + category.slice(1).toLowerCase();
@@ -492,6 +539,35 @@ async function processWorkOrder(workOrderNumber: number): Promise<void> {
         break;
       }
     }
+    
+    // Special case: If category is "General Maintenance" and description mentions smoke/CO detectors,
+    // override to "Smoke/CO Detectors"
+    if (category === 'General Maintenance') {
+      const smokeCoKeywords = ['combo detector', 'smoke detector', 'co detector', 'smoke/co', 'smoke co', 'carbon monoxide'];
+      for (const keyword of smokeCoKeywords) {
+        if (descriptionLower.includes(keyword)) {
+          category = 'Smoke/CO Detectors';
+          console.log(`[WorkOrderMonitor] Detected smoke/CO detector keyword "${keyword}" in description, overriding category to "Smoke/CO Detectors"`);
+          break;
+        }
+      }
+    }
+
+    // Check if type or category are different from existing values
+    // Only send PATCH if there's a change
+    const existingType = workOrder.type;
+    const existingCategory = workOrder.category;
+    
+    if (existingType === type && existingCategory === category) {
+      console.log(
+        `[WorkOrderMonitor] Work order ${workOrderNumber} already has correct type/category (${type}/${category}), skipping PATCH`
+      );
+      return; // No changes needed, skip the PATCH request
+    }
+    
+    console.log(
+      `[WorkOrderMonitor] Type/category changed: "${existingType}/${existingCategory}" -> "${type}/${category}"`
+    );
 
     // Get requestedBy (owner with 100% ownership)
     const requestedBy = await getRequestedBy(workOrder);
@@ -507,8 +583,15 @@ async function processWorkOrder(workOrderNumber: number): Promise<void> {
       publishToTenantPortal: false,
       type: type,
       category: category,
-      unitIDs: workOrder.unitIDs || [workOrder.unitID],
     };
+    
+    // Only include unitIDs if they're different from buildingID
+    const unitIDs = workOrder.unitIDs || (workOrder.unitID ? [workOrder.unitID] : []);
+    // Only include unitIDs if they're not the same as buildingID
+    // If unitIDs is empty, or contains only buildingID, don't include it
+    if (unitIDs.length > 0 && !(unitIDs.length === 1 && unitIDs[0] === workOrder.buildingID)) {
+      patchBody.unitIDs = unitIDs;
+    }
 
     // Minute To Enter - preserve existing value or set to 0 if missing
     if (workOrder.minuteToEnter !== undefined && workOrder.minuteToEnter !== null) {
@@ -545,7 +628,11 @@ async function processWorkOrder(workOrderNumber: number): Promise<void> {
     console.log(`[WorkOrderMonitor]   - buildingID: ${patchBody.buildingID}`);
     console.log(`[WorkOrderMonitor]   - requestedBy: ${patchBody.requestedBy}`);
     console.log(`[WorkOrderMonitor]   - publishToTenantPortal: ${patchBody.publishToTenantPortal}`);
-    console.log(`[WorkOrderMonitor]   - unitIDs: [${patchBody.unitIDs.join(', ')}]`);
+    if (patchBody.unitIDs) {
+      console.log(`[WorkOrderMonitor]   - unitIDs: [${patchBody.unitIDs.join(', ')}]`);
+    } else {
+      console.log(`[WorkOrderMonitor]   - unitIDs: (omitted - same as buildingID)`);
+    }
     console.log(`[WorkOrderMonitor] Full PATCH body:`, JSON.stringify(patchBody, null, 2));
 
     // Send PATCH request to update work order
