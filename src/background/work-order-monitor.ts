@@ -304,85 +304,69 @@ function normalizeCategory(category: string): string {
 /**
  * Try to fetch Meld data from API endpoints
  */
-async function tryMeldApi(orgId: string | null, meldId: string): Promise<MeldInfo | null> {
+async function tryMeldApi(meldId: string): Promise<MeldInfo | null> {
   const baseUrl = 'https://app.propertymeld.com';
+  const orgId = '2611';
+  const endpoint = `/${orgId}/m/${orgId}/api/v2/melds/${meldId}/`;
   
-  // Build API endpoints - prefer the org-specific pattern if we have orgId
-  const apiEndpoints: string[] = [];
-  
-  if (orgId) {
-    // Use the org-specific API pattern: /{orgId}/m/{orgId}/api/v2/melds/{meldId}/
-    apiEndpoints.push(`/${orgId}/m/${orgId}/api/v2/melds/${meldId}/`);
-    apiEndpoints.push(`/${orgId}/m/${orgId}/api/v1/melds/${meldId}/`);
-    apiEndpoints.push(`/${orgId}/m/${orgId}/api/melds/${meldId}/`);
-  }
-  
-  // Also try generic endpoints
-  apiEndpoints.push(`/api/v2/melds/${meldId}/`);
-  apiEndpoints.push(`/api/v1/melds/${meldId}/`);
-  apiEndpoints.push(`/api/melds/${meldId}/`);
+  try {
+    const response = await fetch(`${baseUrl}${endpoint}`, {
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
 
-  for (const endpoint of apiEndpoints) {
-    try {
-      const response = await fetch(`${baseUrl}${endpoint}`, {
-        credentials: 'include',
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        console.log(`[WorkOrderMonitor] API endpoint ${endpoint} returned data`);
-        
-        // Log the full API response object
-        console.log(`[WorkOrderMonitor] Full Meld API response:`, JSON.stringify(data, null, 2));
-        
-        // Extract type and category directly from the API response
-        let type = data.work_type;
-        const category = data.work_category;
-        
-        // Check if this is a recurring work order
-        // Check for recurring_meld field or other recurring indicators
-        const isRecurring = !!(data.recurring_meld) || data.recurring === true;
-        
-        if (isRecurring) {
-          console.log(`[WorkOrderMonitor] Detected recurring work order, setting type to "Recurring"`);
-          type = 'Recurring';
-        } else {
-          // Normalize type (API returns uppercase like "REPAIR", mapping expects "Repair")
-          if (type && typeof type === 'string' && type === type.toUpperCase()) {
-            type = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
-          }
-        }
-        
-        if (type && category) {
-          const normalizedCategory = normalizeCategory(category);
-          console.log(`[WorkOrderMonitor] Found type/category from API ${endpoint}: ${type}/${normalizedCategory}`);
-          return { type, category: normalizedCategory };
-        } else {
-          console.log(`[WorkOrderMonitor] API returned data but missing type/category. Type: ${type}, Category: ${category}`);
-          // Log all keys to help debug
-          const allKeys = Object.keys(data);
-          console.log(`[WorkOrderMonitor] All data keys (${allKeys.length}):`, allKeys);
-          
-          // Log any fields that might contain category info
-          const categoryLikeKeys = allKeys.filter(k => k.toLowerCase().includes('categor'));
-          if (categoryLikeKeys.length > 0) {
-            console.log(`[WorkOrderMonitor] Category-like keys:`, categoryLikeKeys);
-            categoryLikeKeys.forEach(key => {
-              console.log(`[WorkOrderMonitor]   ${key}:`, data[key]);
-            });
-          }
-        }
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`[WorkOrderMonitor] API endpoint ${endpoint} returned data`);
+      
+      // Log the full API response object
+      console.log(`[WorkOrderMonitor] Full Meld API response:`, JSON.stringify(data, null, 2));
+      
+      // Extract type and category directly from the API response
+      let type = data.work_type;
+      const category = data.work_category;
+      
+      // Check if this is a recurring work order
+      // Check for recurring_meld field or other recurring indicators
+      const isRecurring = !!(data.recurring_meld) || data.recurring === true;
+      
+      if (isRecurring) {
+        console.log(`[WorkOrderMonitor] Detected recurring work order, setting type to "Recurring"`);
+        type = 'Recurring';
       } else {
-        console.log(`[WorkOrderMonitor] API endpoint ${endpoint} returned ${response.status}`);
+        // Normalize type (API returns uppercase like "REPAIR", mapping expects "Repair")
+        if (type && typeof type === 'string' && type === type.toUpperCase()) {
+          type = type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+        }
       }
-    } catch (error) {
-      // Continue to next endpoint
-      console.log(`[WorkOrderMonitor] API endpoint ${endpoint} failed:`, error);
+      
+      if (type && category) {
+        const normalizedCategory = normalizeCategory(category);
+        console.log(`[WorkOrderMonitor] Found type/category from API ${endpoint}: ${type}/${normalizedCategory}`);
+        return { type, category: normalizedCategory };
+      } else {
+        console.log(`[WorkOrderMonitor] API returned data but missing type/category. Type: ${type}, Category: ${category}`);
+        // Log all keys to help debug
+        const allKeys = Object.keys(data);
+        console.log(`[WorkOrderMonitor] All data keys (${allKeys.length}):`, allKeys);
+        
+        // Log any fields that might contain category info
+        const categoryLikeKeys = allKeys.filter(k => k.toLowerCase().includes('categor'));
+        if (categoryLikeKeys.length > 0) {
+          console.log(`[WorkOrderMonitor] Category-like keys:`, categoryLikeKeys);
+          categoryLikeKeys.forEach(key => {
+            console.log(`[WorkOrderMonitor]   ${key}:`, data[key]);
+          });
+        }
+      }
+    } else {
+      console.log(`[WorkOrderMonitor] API endpoint ${endpoint} returned ${response.status}`);
     }
+  } catch (error) {
+    console.log(`[WorkOrderMonitor] API endpoint ${endpoint} failed:`, error);
   }
 
   return null;
@@ -392,14 +376,14 @@ async function tryMeldApi(orgId: string | null, meldId: string): Promise<MeldInf
  * Get Meld type and category from API
  */
 async function scrapeMeldPage(meldUrl: string): Promise<MeldInfo | null> {
-  const { orgId, meldId } = extractMeldIdsFromUrl(meldUrl);
+  const { meldId } = extractMeldIdsFromUrl(meldUrl);
   if (!meldId) {
     console.log(`[WorkOrderMonitor] Could not extract Meld ID from URL: ${meldUrl}`);
     return null;
   }
   
-  console.log(`[WorkOrderMonitor] Extracted orgId: ${orgId}, meldId: ${meldId}, calling API...`);
-  return await tryMeldApi(orgId, meldId);
+  console.log(`[WorkOrderMonitor] Extracted meldId: ${meldId}, calling API...`);
+  return await tryMeldApi(meldId);
 }
 
 /**
