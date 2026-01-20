@@ -187,3 +187,128 @@ export function extractBuildingAddressFromUnitSummaryPage(doc: Document): string
   console.warn("Could not find building address on unit summary page");
   return null;
 }
+
+export function extractMeldTypeAndCategory(doc: Document): { type: string | null; category: string | null } {
+  let type: string | null = null;
+  let category: string | null = null;
+
+  // Method 1: Try data-testid attributes (most reliable)
+  const workTypeElement = doc.querySelector('[data-testid="meld-work-type"]');
+  if (workTypeElement) {
+    // Look for span with the value, or extract from text
+    const span = workTypeElement.querySelector('span');
+    if (span) {
+      type = span.textContent?.trim() || null;
+    } else {
+      // Extract from text like "Work type Repair"
+      const text = workTypeElement.textContent || '';
+      const match = text.match(/Work type\s+(\S+)/i);
+      if (match) {
+        type = match[1].trim();
+      }
+    }
+    if (type) {
+      console.log(`[ContentScript] Extracted Work type from data-testid: "${type}"`);
+    }
+  }
+
+  // Method 2: Try to find category with data-testid (if it exists)
+  const categoryElement = doc.querySelector('[data-testid*="category" i]');
+  if (categoryElement) {
+    const span = categoryElement.querySelector('span');
+    if (span) {
+      category = span.textContent?.trim() || null;
+    } else {
+      const text = categoryElement.textContent || '';
+      const match = text.match(/Category\s+([^\n]+)/i);
+      if (match) {
+        category = match[1].trim();
+      }
+    }
+    if (category) {
+      console.log(`[ContentScript] Extracted Category from data-testid: "${category}"`);
+    }
+  }
+
+  // Method 3: Fall back to looking for "Work type" text with span value
+  if (!type) {
+    const allElements = Array.from(doc.querySelectorAll<HTMLElement>("*"));
+    for (const el of allElements) {
+      const text = el.textContent?.trim() || "";
+      
+      // Look for "Work type" followed by a span with the value
+      if (/Work type/i.test(text)) {
+        const span = el.querySelector("span");
+        if (span) {
+          type = span.textContent?.trim() || null;
+          if (type) {
+            console.log(`[ContentScript] Extracted Work type from span: "${type}"`);
+            break;
+          }
+        }
+        
+        // Also try extracting from text like "Work type Repair"
+        const match = text.match(/Work type\s+(\S+)/i);
+        if (match) {
+          type = match[1].trim();
+          if (type) {
+            console.log(`[ContentScript] Extracted Work type from text: "${type}"`);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Method 4: Fall back to looking for "Category" text with span value
+  if (!category) {
+    const allElements = Array.from(doc.querySelectorAll<HTMLElement>("*"));
+    for (const el of allElements) {
+      const text = el.textContent?.trim() || "";
+      
+      // Look for "Category" followed by a span with the value
+      if (/^Category$/i.test(text)) {
+        // Try finding dd element (old structure)
+        const flexGroup = el.closest(".euiFlexGroup");
+        if (flexGroup) {
+          const dd = flexGroup.querySelector<HTMLElement>("dd");
+          if (dd) {
+            category = dd.textContent?.trim() || null;
+            if (category) {
+              console.log(`[ContentScript] Extracted Category from dd: "${category}"`);
+              break;
+            }
+          }
+        }
+        
+        // Try finding span in parent
+        const span = el.parentElement?.querySelector("span");
+        if (span) {
+          category = span.textContent?.trim() || null;
+          if (category) {
+            console.log(`[ContentScript] Extracted Category from span: "${category}"`);
+            break;
+          }
+        }
+      }
+      
+      // Also try extracting from text like "Category Pest Control"
+      if (/Category/i.test(text) && !category) {
+        const match = text.match(/Category\s+([^\n]+)/i);
+        if (match) {
+          category = match[1].trim();
+          if (category) {
+            console.log(`[ContentScript] Extracted Category from text: "${category}"`);
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  if (!type || !category) {
+    console.warn(`[ContentScript] Could not extract type/category. Type: ${type}, Category: ${category}`);
+  }
+
+  return { type, category };
+}

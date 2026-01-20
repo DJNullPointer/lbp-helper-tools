@@ -10,6 +10,7 @@ import {
   extractUnitAddressFromMeldSummaryPage,
   extractBuildingAddressFromMeldSummaryPage,
   extractIssueIdFromMeldSummaryPage,
+  extractMeldTypeAndCategory,
 } from "./extractors";
 
 export {};
@@ -360,6 +361,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
       }
     })();
+    return true; // async response
+  }
+
+  if (message.type === "EXTRACT_MELD_TYPE_AND_CATEGORY") {
+    try {
+      const { type, category } = extractMeldTypeAndCategory(document);
+      if (type && category) {
+        sendResponse({ success: true, type, category });
+      } else {
+        sendResponse({
+          success: false,
+          error: `Could not extract type/category. Type: ${type}, Category: ${category}`,
+        });
+      }
+    } catch (err: any) {
+      sendResponse({
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
     return true; // async response
   }
 

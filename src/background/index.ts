@@ -6,8 +6,12 @@ import { fetchPropertyWarePage } from "./propertyware/fetch";
 import { getBuildingIdFromAddress, getPropertyWareWorkOrderUrl, getUnitIdFromAddress } from "./propertyware/api";
 import { extractAddressFromUnitSummaryUrl, getUnitSummaryUrlFromMeld } from "./propertyware/scraping";
 import { fetchPropertywareSummaryFromAddress } from "./propertyware/summary";
+import { initializeWorkOrderMonitor } from "./work-order-monitor";
 
 export {};
+
+// Initialize work order monitor (runs on background script startup)
+initializeWorkOrderMonitor();
 
 // Set up listener to modify filenames for invoice downloads
 chrome.downloads.onDeterminingFilename.addListener((downloadItem, suggest) => {
