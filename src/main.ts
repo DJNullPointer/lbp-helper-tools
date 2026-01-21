@@ -42,5 +42,7 @@ renderStatuses();
 
 const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
 if (toolsContainer) {
-  createToolsMenu({ container: toolsContainer });
+  createToolsMenu({ container: toolsContainer }).catch((error) => {
+    console.error("Error creating tools menu:", error);
+  });
 }

@@ -7,6 +7,8 @@ import { getBuildingIdFromAddress, getPropertyWareWorkOrderUrl, getUnitIdFromAdd
 import { extractAddressFromUnitSummaryUrl, getUnitSummaryUrlFromMeld } from "./propertyware/scraping";
 import { fetchPropertywareSummaryFromAddress } from "./propertyware/summary";
 import { initializeWorkOrderMonitor } from "./work-order-monitor";
+import { downloadInvoiceAttachments } from "./gmail";
+import { getGmailInvoiceDownloaderLastRunTime, setGmailInvoiceDownloaderLastRunTime } from "../utils/storage/gmail-invoice-downloader";
 
 export {};
 
@@ -251,6 +253,54 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ success: true, ...result });
       } catch (err: any) {
         console.error("DOWNLOAD_MELD_INVOICES_FROM_PAYMENTS error", err);
+        sendResponse({ success: false, error: err?.message || String(err) });
+      }
+    })();
+    return true; // async
+  }
+
+  // DOWNLOAD_GMAIL_INVOICES --------------------------------------------------
+  if (message.type === "DOWNLOAD_GMAIL_INVOICES") {
+    (async () => {
+      try {
+        // Get last run time from Redis
+        const lastRunTime = await getGmailInvoiceDownloaderLastRunTime();
+        
+        const onProgress = (
+          current: number,
+          total: number,
+          detail?: string,
+        ) => {
+          // Send progress update to any listening popup
+          chrome.runtime
+            .sendMessage({
+              type: "GMAIL_INVOICE_DOWNLOAD_PROGRESS",
+              current,
+              total,
+              detail,
+            })
+            .catch(() => {
+              // Ignore errors if no listener (popup might be closed)
+            });
+        };
+
+        const result = await downloadInvoiceAttachments(
+          lastRunTime || undefined,
+          onProgress,
+        );
+        
+        // Update last run time in Redis
+        // Use the last message date if available, otherwise use current time
+        const newLastRunTime = result.lastMessageDate || Date.now();
+        await setGmailInvoiceDownloaderLastRunTime(newLastRunTime);
+        
+        sendResponse({ 
+          success: true, 
+          count: result.count,
+          lastMessageDate: result.lastMessageDate,
+        });
+      } catch (err: any) {
+        console.error("DOWNLOAD_GMAIL_INVOICES error", err);
         sendResponse({ success: false, error: err?.message || String(err) });
       }
     })();

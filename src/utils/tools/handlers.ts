@@ -2,7 +2,8 @@
 // These connect the popup UI to content scripts and background workers
 
 import { ToolItem } from "../ui/tool-item";
-import { sendMessageToActiveTab, sendMessageToContentScript, getActiveTab, matchesUrlPattern } from "../messaging";
+import { sendMessageToActiveTab, sendMessageToContentScript, getActiveTab, matchesUrlPattern, sendMessageToBackground } from "../messaging";
+import { createToolsMenu } from "../ui/tools-menu";
 
 // Copy to clipboard using content script (has page context, most reliable)
 async function copyToClipboardRobust(text: string): Promise<void> {
@@ -42,6 +43,9 @@ export async function executeTool(tool: ToolItem): Promise<void> {
       break;
     case "meld-download-all-invoices":
       await executeMeldDownloadInvoices();
+      break;
+    case "gmail-download-invoices":
+      await executeGmailDownloadInvoices();
       break;
     default:
       throw new Error(`Unknown tool: ${tool.id}`);
@@ -226,6 +230,52 @@ async function executeMeldDownloadInvoices(): Promise<void> {
         "PropertyMeld content script not loaded. Please refresh the page and try again."
       );
     }
+    throw error;
+  } finally {
+    // Clean up progress listener
+    chrome.runtime.onMessage.removeListener(progressListener);
+  }
+}
+
+async function executeGmailDownloadInvoices(): Promise<void> {
+  // Set up progress listener before starting download
+  const progressListener = (message: any) => {
+    if (message.type === "GMAIL_INVOICE_DOWNLOAD_PROGRESS" && currentLoadingContainer) {
+      const loadingContainer = currentLoadingContainer.querySelector(".loading-sequence") as HTMLElement;
+      if (loadingContainer && (loadingContainer as any).updateProgress) {
+        (loadingContainer as any).updateProgress(
+          message.current || 0,
+          message.total || 0,
+          message.detail || "Downloading Gmail invoice attachments...",
+        );
+      }
+    }
+  };
+
+  chrome.runtime.onMessage.addListener(progressListener);
+
+  try {
+    const response = await sendMessageToBackground<{
+      count: number;
+      lastMessageDate: number | null;
+    }>({
+      type: "DOWNLOAD_GMAIL_INVOICES",
+    });
+
+    if (!response.success) {
+      throw new Error(response.error || "Failed to download Gmail invoice attachments");
+    }
+
+    if (response.data) {
+      console.log(`[GmailDownload] Downloaded ${response.data.count} attachments`);
+      
+      // Refresh the tools menu to update last run time
+      const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
+      if (toolsContainer) {
+        await createToolsMenu({ container: toolsContainer });
+      }
+    }
+  } catch (error) {
     throw error;
   } finally {
     // Clean up progress listener
