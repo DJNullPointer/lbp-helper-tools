@@ -12,6 +12,7 @@ import {
   extractIssueIdFromMeldSummaryPage,
   extractMeldTypeAndCategory,
 } from "./extractors";
+import { initializeDropdownButtons, initializeRebuildReminder } from "./category-buttons";
 
 export {};
 
@@ -386,3 +387,55 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+// Initialize category buttons on page load for Meld forms
+if (window.location.hostname.includes('propertymeld.com')) {
+  // Check if we're on a form page (new meld or edit meld)
+  // Patterns:
+  // - /melds/new-meld/ (with optional query params like ?for_unit=1331109)
+  // - /meld/{id}/edit/ (with optional trailing slash)
+  const url = new URL(window.location.href);
+  const isNewMeld = /\/melds\/new-meld\/?/.test(url.pathname);
+  const isEditMeld = /\/meld\/\d+\/edit\/?$/.test(url.pathname);
+  
+  if (isNewMeld || isEditMeld) {
+    // Initialize immediately if DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        initializeDropdownButtons();
+        initializeRebuildReminder();
+      });
+    } else {
+      initializeDropdownButtons();
+      initializeRebuildReminder();
+    }
+    
+    // Also listen for SPA navigation (Meld uses React/SPA)
+    let lastUrl = window.location.href;
+    const checkForNavigation = () => {
+      if (window.location.href !== lastUrl) {
+        lastUrl = window.location.href;
+        const newUrl = new URL(window.location.href);
+        const isNewMeldNow = /\/melds\/new-meld\/?/.test(newUrl.pathname);
+        const isEditMeldNow = /\/meld\/\d+\/edit\/?$/.test(newUrl.pathname);
+        if (isNewMeldNow || isEditMeldNow) {
+          // Wait longer for SPA to render, then initialize
+          setTimeout(() => {
+            initializeDropdownButtons();
+            initializeRebuildReminder();
+          }, 1000);
+        }
+      }
+    };
+    
+    // Use MutationObserver to detect SPA navigation
+    const observer = new MutationObserver(() => {
+      checkForNavigation();
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  }
+}

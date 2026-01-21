@@ -122,6 +122,8 @@ const DESCRIPTION_KEYWORD_TO_CATEGORY: Record<string, string> = {
   'mold': 'Mold Remediation',
   'pressure washing': 'Pressure Washing',
   'rebuild': 'Rebuild',
+  'Rebuild': 'Rebuild',
+  'REBUILD': 'Rebuild',
   'renovations': 'Rebuild',
   'septic': 'Septic',
   'trash': 'Trash Removal',
@@ -793,20 +795,45 @@ async function checkForNewWorkOrders(): Promise<void> {
 export function initializeWorkOrderMonitor(): void {
   console.log('[WorkOrderMonitor] Initializing work order monitor');
 
-  // Set up periodic alarm
-  chrome.alarms.create(ALARM_NAME, {
-    periodInMinutes: CHECK_INTERVAL_MINUTES,
-  });
-
-  // Run initial check after a short delay (to let extension fully load)
-  setTimeout(() => {
-    checkForNewWorkOrders();
-  }, 5000);
-
-  // Listen for alarm events
+  // Always set up the alarm listener first (in case service worker restarted)
   chrome.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === ALARM_NAME) {
+      console.log('[WorkOrderMonitor] Alarm fired, checking for new work orders');
       checkForNewWorkOrders();
+    }
+  });
+
+  // Check if alarm already exists and handle initialization
+  chrome.alarms.get(ALARM_NAME, (existingAlarm) => {
+    if (!existingAlarm) {
+      // First time - create the alarm and run initial check
+      chrome.alarms.create(ALARM_NAME, {
+        periodInMinutes: CHECK_INTERVAL_MINUTES,
+      });
+      console.log(
+        `[WorkOrderMonitor] Created alarm - checking every ${CHECK_INTERVAL_MINUTES} minutes`
+      );
+      // Run initial check after a short delay (to let extension fully load)
+      setTimeout(() => {
+        checkForNewWorkOrders();
+      }, 5000);
+    } else {
+      // Alarm exists - check if it's overdue
+      const isOverdue = existingAlarm.scheduledTime <= Date.now();
+      console.log(
+        `[WorkOrderMonitor] Alarm already exists, next scheduled: ${new Date(existingAlarm.scheduledTime).toISOString()}`
+      );
+      
+      if (isOverdue) {
+        // Alarm should have fired already, trigger check immediately
+        console.log('[WorkOrderMonitor] Found overdue alarm, triggering check immediately');
+        setTimeout(() => {
+          checkForNewWorkOrders();
+        }, 2000);
+      } else {
+        // Alarm is scheduled for the future, just wait for it to fire
+        console.log('[WorkOrderMonitor] Alarm is scheduled for the future, waiting for it to fire');
+      }
     }
   });
 
