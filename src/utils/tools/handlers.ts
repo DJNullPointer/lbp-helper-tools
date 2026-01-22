@@ -238,49 +238,71 @@ async function executeMeldDownloadInvoices(): Promise<void> {
 }
 
 async function executeGmailDownloadInvoices(): Promise<void> {
-  // Set up progress listener before starting download
-  const progressListener = (message: any) => {
-    if (message.type === "GMAIL_INVOICE_DOWNLOAD_PROGRESS" && currentLoadingContainer) {
-      const loadingContainer = currentLoadingContainer.querySelector(".loading-sequence") as HTMLElement;
-      if (loadingContainer && (loadingContainer as any).updateProgress) {
-        (loadingContainer as any).updateProgress(
-          message.current || 0,
-          message.total || 0,
-          message.detail || "Downloading Gmail invoice attachments...",
-        );
-      }
-    }
-  };
-
-  chrome.runtime.onMessage.addListener(progressListener);
-
-  try {
-    const response = await sendMessageToBackground<{
-      count: number;
-      lastMessageDate: number | null;
-    }>({
-      type: "DOWNLOAD_GMAIL_INVOICES",
-    });
-
-    if (!response.success) {
-      throw new Error(response.error || "Failed to download Gmail invoice attachments");
-    }
-
-    if (response.data) {
-      console.log(`[GmailDownload] Downloaded ${response.data.count} attachments`);
-      
-      // Refresh the tools menu to update last run time
-      const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
-      if (toolsContainer) {
-        await createToolsMenu({ container: toolsContainer });
-      }
-    }
-  } catch (error) {
-    throw error;
-  } finally {
-    // Clean up progress listener
-    chrome.runtime.onMessage.removeListener(progressListener);
+  const toolsContainer = document.querySelector<HTMLDivElement>("#tools-container");
+  if (!toolsContainer) {
+    throw new Error("Tools container not found");
   }
+
+  // Import and show the downloader screen
+  const { showGmailDownloaderScreen } = await import("../ui/gmail-downloader-screen");
+  const { showLoadingSequence } = await import("../ui/loading-sequence");
+
+  await showGmailDownloaderScreen({
+    container: toolsContainer,
+    onCancel: async () => {
+      await createToolsMenu({ container: toolsContainer });
+    },
+    onStartDownload: async () => {
+      // Set up progress listener before starting download
+      const progressListener = (message: any) => {
+        if (message.type === "GMAIL_INVOICE_DOWNLOAD_PROGRESS" && currentLoadingContainer) {
+          const loadingContainer = currentLoadingContainer.querySelector(".loading-sequence") as HTMLElement;
+          if (loadingContainer && (loadingContainer as any).updateProgress) {
+            (loadingContainer as any).updateProgress(
+              message.current || 0,
+              message.total || 0,
+              message.detail || "Downloading Gmail invoice attachments...",
+            );
+          }
+        }
+      };
+
+      chrome.runtime.onMessage.addListener(progressListener);
+
+      try {
+        setCurrentLoadingContainer(toolsContainer);
+        await showLoadingSequence({
+          container: toolsContainer,
+          message: "Downloading Gmail invoice attachments...",
+        });
+
+        const response = await sendMessageToBackground<{
+          count: number;
+          lastMessageDate: number | null;
+        }>({
+          type: "DOWNLOAD_GMAIL_INVOICES",
+        });
+
+        if (!response.success) {
+          throw new Error(response.error || "Failed to download Gmail invoice attachments");
+        }
+
+        if (response.data) {
+          console.log(`[GmailDownload] Downloaded ${response.data.count} attachments`);
+        }
+
+        // Return to tools menu after completion
+        await createToolsMenu({ container: toolsContainer });
+      } catch (error) {
+        // Return to tools menu on error
+        await createToolsMenu({ container: toolsContainer });
+        throw error;
+      } finally {
+        setCurrentLoadingContainer(null);
+        chrome.runtime.onMessage.removeListener(progressListener);
+      }
+    },
+  });
 }
 
 

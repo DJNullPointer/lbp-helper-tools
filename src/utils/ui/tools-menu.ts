@@ -57,8 +57,7 @@ async function getToolsWithLastRunTimes(): Promise<ToolItem[]> {
       id: "gmail-download-invoices",
       name: "Download Gmail Invoice Attachments",
       description:
-        "Downloads all attachments from emails with the 'invoices' label since the last time this tool was used. \n\n" +
-        "If this is the first time, downloads attachments from the last 24 hours. \n\n" +
+        "Download all attachments from emails with the 'invoices' label since the last time this tool was used. \n\n" +
         "Requires Gmail OAuth authentication.",
       category: "accounting",
       lastRunTime: lastRunTimes.get("gmail-download-invoices") ?? null,

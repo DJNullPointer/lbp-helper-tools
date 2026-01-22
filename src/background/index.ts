@@ -290,8 +290,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         );
         
         // Update last run time in Redis
-        // Use the last message date if available, otherwise use current time
-        const newLastRunTime = result.lastMessageDate || Date.now();
+        // Always use current time to record when the download actually happened
+        const newLastRunTime = Date.now();
         await setGmailInvoiceDownloaderLastRunTime(newLastRunTime);
         
         sendResponse({ 
