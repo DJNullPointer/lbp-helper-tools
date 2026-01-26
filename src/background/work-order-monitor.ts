@@ -491,7 +491,12 @@ async function processWorkOrder(workOrderNumber: number): Promise<void> {
     // Extract Meld URL from description
     const meldUrl = extractMeldUrl(workOrder.description);
     if (!meldUrl) {
-      throw new Error(`No Meld URL found in work order ${workOrderNumber} description`);
+      // Work order doesn't have a Meld URL - skip it and mark as processed
+      console.log(
+        `[WorkOrderMonitor] No Meld URL found in work order ${workOrderNumber} description. ` +
+        `Skipping this work order (it doesn't need to be processed).`
+      );
+      return; // Return successfully so it gets marked as completed
     }
 
     // Scrape Meld page for type and category

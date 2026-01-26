@@ -23,12 +23,21 @@
     }
   ],
 
-  "permissions": ["cookies", "downloads", "tabs", "scripting", "clipboardRead", "clipboardWrite", "storage", "alarms"],
+  "permissions": ["cookies", "downloads", "tabs", "scripting", "clipboardRead", "clipboardWrite", "storage", "alarms", "identity"],
+
+  "oauth2": {
+    "client_id": "851690575009-3ed93maunp5tqb0c36c9v4rd9ejmbm9s.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly"
+    ]
+  },
 
   "host_permissions": [
     "https://app.propertyware.com/*",
     "https://api.propertyware.com/*",
     "https://app.propertymeld.com/*",
-    "https://*.netlify.app/*"
+    "https://*.netlify.app/*",
+    "https://gmail.googleapis.com/*",
+    "https://www.googleapis.com/*"
   ]
 }
